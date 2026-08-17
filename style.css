@@ -1,6 +1,6 @@
 :root {
-    --gradient-start: #0f172a;
-    --gradient-end: #1e293b;
+    --gradient-start: #000512;
+    --gradient-end: #1b2437;
     --glass-bg: rgba(255, 255, 255, 0.08);
     --glass-border: rgba(255, 255, 255, 0.15);
     --text-color: #f8fafc;
@@ -28,7 +28,6 @@ body {
     display: none !important;
 }
 
-/* ================= LOGIN PAGE ================= */
 .login-body {
     display: flex;
     justify-content: center;
@@ -112,7 +111,6 @@ body {
     min-height: 1em;
 }
 
-/* ================= APP SHELL ================= */
 .app-shell {
     display: flex;
     height: 100vh;
@@ -240,7 +238,6 @@ header {
     flex-direction: column;
 }
 
-/* ================= HOME VIEW ================= */
 .rag-grid {
     padding: 10px 20px 20px 20px;
     display: grid;
@@ -281,7 +278,6 @@ header {
     line-height: 1.4;
 }
 
-/* ================= CHAT VIEW ================= */
 .chat-area {
     flex: 1;
     padding: 10px 20px;
@@ -481,7 +477,6 @@ header {
     transform: scale(1.05);
 }
 
-/* ================= MODAL ================= */
 .modal {
     position: fixed;
     top: 0;
@@ -605,4 +600,21 @@ header {
 .typing {
     font-style: italic;
     opacity: 0.7;
+}
+
+.auth-link {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.auth-link a {
+    color: #f8fafc;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.auth-link a:hover {
+    text-decoration: underline;
 }

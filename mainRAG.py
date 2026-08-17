@@ -4,38 +4,41 @@ from supabase import create_client
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.prompts import PromptTemplate
 
-# 1. Setup and Environment
 load_dotenv()
+
 def generate_rag_response(
     query="why ned move to capital",
-    usermodel="granite4:350m",
+    usermodel="gemma4:31b-cloud",
     usertemperature=0.5,
     umatch_count=10,
     umatch_threshold=0.4,
-    sysprompt="\nYou are a helpful assistant. Use the following context to answer the user's question. \nIf you don't know the answer based on the context, just say that you don't know.\n"
+    sysprompt="\nYou are a helpful assistant. Use the following context to answer the user's question.\nIf you don't know the answer based on the context, just say that you don't know.\n"
 ):
-    """
-    Searches a Supabase vector database for context and generates an answer using ChatOllama.
-    """
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
+    
+    # Force local ollama package to respect cloud URL
+    os.environ['OLLAMA_HOST'] = OLLAMA_BASE_URL
 
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("Missing Supabase credentials. Please check your .env file.")
-
+        
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    
+    # Pass headers for cloud authentication
+    client_kwargs = {}
+    if OLLAMA_API_KEY:
+        client_kwargs['headers'] = {'Authorization': f'Bearer {OLLAMA_API_KEY}'}
 
-    # Initialize Embeddings and LLM
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    llm = ChatOllama(model=usermodel, temperature=usertemperature)
+    embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=OLLAMA_BASE_URL, client_kwargs=client_kwargs)
+    llm = ChatOllama(model=usermodel, temperature=usertemperature, base_url=OLLAMA_BASE_URL, client_kwargs=client_kwargs)
 
     print(f"Searching for: '{query}'...\n")
-
-    # Generate query embedding
     query_embedding = embeddings.embed_query(query)
 
     try:
-        # Search Vector Database
         result = supabase.rpc(
             "match_mainragvdb",
             {
@@ -49,8 +52,7 @@ def generate_rag_response(
         if not result.data:
             print("No matches found above the threshold.")
             return None
-            
-        # Extract context from matches
+
         retrieved_context = ""
         for doc in result.data:
             doc_id = doc.get('uid', doc.get('id', 'N/A'))
@@ -58,30 +60,22 @@ def generate_rag_response(
             similarity = doc.get('similarity', 0.0)
             
             print(f"ID: {doc_id} | Similarity: {similarity:.3f}")
-            print(f"Text: {text_content[:100]}...") # Print a snippet for debugging
+            print(f"Text: {text_content[:100]}...") 
             print("-" * 25)
             
-            # Append text to our context block
             retrieved_context += f"{text_content}\n\n"
 
-        # Prompt the LLM
         print("\n--- GENERATING ANSWER ---")
         prompt_template = """
         {sysprompt}
-        
         Context:{context}
-        
         Question: {question}
-        
         Answer:
         """
         
         prompt = PromptTemplate.from_template(prompt_template)
-        
-        # Combine the prompt and LLM using LangChain Expression Language (LCEL)
         chain = prompt | llm 
         
-        # Execute and print the result
         response = chain.invoke({
             "sysprompt": sysprompt,
             "context": retrieved_context,
