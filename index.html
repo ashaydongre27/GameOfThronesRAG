@@ -12,14 +12,22 @@
 <body>
     <div class="app-shell">
         <aside class="sidebar">
-            <button id="homeBtn" class="sidebar-icon active" title="Home">
-                <i class="fas fa-home"></i>
-                <span class="sidebar-text">Home</span>
-            </button>
-            <button id="logoutBtn" class="sidebar-icon logout" title="Logout">
-                <i class="fas fa-sign-out-alt"></i>
-                <span class="sidebar-text">Logout</span>
-            </button>
+            <div class="sidebar-top">
+                <button id="homeBtn" class="sidebar-icon active" title="Home">
+                    <i class="fas fa-home"></i>
+                    <span class="sidebar-text">Home</span>
+                </button>
+            </div>
+            <div class="sidebar-bottom">
+                <div class="sidebar-user" id="userBadge" title="Current User">
+                    <i class="fas fa-user-circle"></i>
+                    <span class="sidebar-text user-name" id="sidebarUsername">User</span>
+                </div>
+                <button id="logoutBtn" class="sidebar-icon logout" title="Logout">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span class="sidebar-text">Logout</span>
+                </button>
+            </div>
         </aside>
         <div class="main-container">
             <header>
@@ -27,19 +35,28 @@
                     <h1 id="viewTitle">Home</h1>
                     <span id="ragContextLabel" class="rag-label hidden"></span>
                 </div>
-                <button id="settingsBtn" class="icon-btn" title="Settings">
-                    <i class="fas fa-cog"></i>
-                </button>
+                <div class="header-actions">
+                    <button id="clearChatBtn" class="header-action-btn hidden" title="Clear conversation for this topic">
+                        <i class="fas fa-trash-alt"></i>
+                        <span>Clear Chat</span>
+                    </button>
+                    <button id="settingsBtn" class="icon-btn" title="Settings">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
             </header>
             <main id="homeView" class="view-area">
+                <div class="welcome-banner">
+                    <h2 id="welcomeGreeting">Welcome back!</h2>
+                    <p>Select a knowledge base below to begin asking questions. Your conversation history is saved automatically.</p>
+                </div>
                 <div class="rag-grid" id="ragGrid">
                 </div>
             </main>
             <main id="chatView" class="view-area hidden">
                 <div id="chatArea" class="chat-area">
                     <div class="message bot">
-                        <div class="message-content">Select a knowledge base from the home page to start asking
-                            questions.</div>
+                        <div class="message-content">Select a knowledge base from the home page to start asking questions.</div>
                     </div>
                 </div>
                 <footer class="input-area">
@@ -51,6 +68,8 @@
             </main>
         </div>
     </div>
+
+    <!-- Settings Modal -->
     <div id="settingsModal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">
@@ -62,37 +81,53 @@
                     <h3>Appearance Profiles</h3>
                     <div class="setting-item">
                         <select id="themeProfile">
-                            <option value="light">Light</option>
-                            <option value="dark">Dark Contrast</option>
                             <option value="midnight">Midnight</option>
+                            <option value="dark">Dark Contrast</option>
                             <option value="cosmic">Cosmic Purple</option>
                             <option value="ocean">Deep Ocean</option>
                             <option value="sunset">Sunset Fire</option>
                             <option value="forest">Forest</option>
+                            <option value="light">Light</option>
                             <option value="custom">Custom</option>
                         </select>
                     </div>
                     <div class="color-pickers">
                         <div class="setting-item" style="flex: 1;">
                             <label for="color1">Color 1</label>
-                            <input type="color" id="color1" value="#6a11cb">
+                            <input type="color" id="color1" value="#0f172a">
                         </div>
                         <div class="setting-item" style="flex: 1;">
                             <label for="color2">Color 2</label>
-                            <input type="color" id="color2" value="#2575fc">
+                            <input type="color" id="color2" value="#1e293b">
                         </div>
                     </div>
                 </div>
+
+                <div class="settings-group">
+                    <h3>Ollama Server & Hosting</h3>
+                    <div class="setting-item">
+                        <label for="ollama_base_url">Ollama Base URL</label>
+                        <input type="text" id="ollama_base_url" placeholder="http://localhost:11434 or cloud endpoint">
+                        <span class="setting-help">Default: http://localhost:11434 (Use ngrok or public IP if hosted on Vercel)</span>
+                    </div>
+                    <div class="setting-item">
+                        <label for="ollama_api_key">Ollama API Key / Bearer Token (Optional)</label>
+                        <input type="password" id="ollama_api_key" placeholder="Enter key if using protected Ollama endpoint">
+                    </div>
+                </div>
+
                 <div class="settings-group">
                     <h3>Model Parameters</h3>
                     <div class="setting-item">
                         <label for="usermodel">Model Name</label>
                         <select id="usermodel">
-                            <option value="gemma4:31b-cloud">gemma4:31b</option>
+                            <option value="gemma4:31b-cloud">gemma4:31b-cloud</option>
                             <option value="nemotron-3-nano:30b-cloud">nemotron-3-nano</option>
                             <option value="gpt-oss:20b-cloud">gpt-oss</option>
                             <option value="gemma:2b">Gemma 2B</option>
                             <option value="phi3:mini">Phi-3 Mini</option>
+                            <option value="llama3:latest">Llama 3</option>
+                            <option value="mistral:latest">Mistral</option>
                         </select>
                     </div>
                     <div class="setting-item">
@@ -100,6 +135,7 @@
                         <input type="range" id="usertemperature" min="0" max="1" step="0.1" value="0.5">
                     </div>
                 </div>
+
                 <div class="settings-group">
                     <h3>Vector Search Parameters</h3>
                     <div class="setting-item">
@@ -111,11 +147,11 @@
                         <input type="range" id="umatch_threshold" min="0" max="1" step="0.05" value="0.4">
                     </div>
                 </div>
+
                 <div class="settings-group">
                     <h3>System Prompt</h3>
                     <div class="setting-item">
-                        <textarea id="sysprompt" rows="4">You are a helpful assistant. Use the following context to answer the user's question. 
-If you don't know the answer based on the context, just say that you don't know.</textarea>
+                        <textarea id="sysprompt" rows="4">You are a helpful assistant. Use the following context to answer the user's question. If you don't know the answer based on the context, just say that you don't know.</textarea>
                     </div>
                 </div>
             </div>

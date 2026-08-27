@@ -10,17 +10,17 @@
 <body class="login-body">
     <div class="login-card">
         <div class="login-header">
-            <i class="fas fa-robot"></i>x`x
+            <i class="fas fa-robot"></i>
             <h1>RAG Assistant</h1>
         </div>
         <form id="loginForm">
             <div class="input-group">
                 <i class="fas fa-user"></i>
-                <input type="text" id="username" placeholder="Username" required>
+                <input type="text" id="username" placeholder="Username" required autocomplete="username">
             </div>
             <div class="input-group">
                 <i class="fas fa-lock"></i>
-                <input type="password" id="password" placeholder="Password" required>
+                <input type="password" id="password" placeholder="Password" required autocomplete="current-password">
             </div>
             <div id="loginError" class="error-msg"></div>
             <button type="submit" class="login-btn">Login</button>
