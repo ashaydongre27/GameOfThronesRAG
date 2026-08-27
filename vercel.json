@@ -1,24 +1,24 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "app.py",
-      "use": "@vercel/python",
-      "config": {
-        "includeFiles": [
-          "index.html",
-          "login.html",
-          "signup.html",
-          "style.css",
-          "script.js"
-        ]
-      }
-    }
-  ],
-  "routes": [
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    },
     {
-      "src": "/(.*)",
-      "dest": "app.py"
+      "source": "/login",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/signup",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/history",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/ask",
+      "destination": "/api/index.py"
     }
   ]
 }
