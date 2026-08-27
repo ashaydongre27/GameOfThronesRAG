@@ -10,8 +10,7 @@
           "login.html",
           "signup.html",
           "style.css",
-          "script.js",
-          "doc/**"
+          "script.js"
         ]
       }
     }

@@ -1,58 +1,230 @@
 import os
 import hashlib
 import traceback
-from flask import Flask, request, jsonify, send_file
+import json
+import requests
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 from supabase import create_client
-from langchain_ollama import OllamaEmbeddings, ChatOllama
-from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
-app = Flask(__name__)
-CORS(app)
 
-# Absolute path to the directory containing this file (Crucial for Vercel)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 1. Initialize Connections 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
+app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
+CORS(app)
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Missing Supabase credentials. Please check your .env file.")
+# 1. Initialize Supabase Connection Safely
+SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").strip()
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY") or
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY") or
+    os.getenv("SUPABASE_KEY") or
+    os.getenv("SUPABASE_ANON_KEY") or
+    os.getenv("SUPABASE_PUBLISHABLE_KEY") or
+    ""
+).strip()
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"Warning: Failed to initialize Supabase client: {e}")
+else:
+    print("Notice: Missing Supabase credentials in environment variables.")
 
-# 2. Routes for serving pages
+
+# 2. Helper functions for Ollama / Cloud AI API calls
+def get_ollama_embedding(base_url, query, api_key=""):
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    url = base_url.rstrip("/")
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    # Try standard Ollama /api/embeddings
+    try:
+        res = requests.post(
+            f"{url}/api/embeddings",
+            json={"model": "nomic-embed-text", "prompt": query},
+            headers=headers,
+            timeout=20
+        )
+        if res.ok:
+            data = res.json()
+            if "embedding" in data:
+                return data["embedding"]
+    except Exception:
+        pass
+
+    # Try Ollama /api/embed
+    try:
+        res = requests.post(
+            f"{url}/api/embed",
+            json={"model": "nomic-embed-text", "input": query},
+            headers=headers,
+            timeout=20
+        )
+        if res.ok:
+            data = res.json()
+            embeddings = data.get("embeddings", [])
+            if embeddings:
+                return embeddings[0]
+    except Exception:
+        pass
+
+    # Fallback to LangChain if installed
+    try:
+        from langchain_ollama import OllamaEmbeddings
+        client_kwargs = {}
+        if api_key:
+            client_kwargs['headers'] = {'Authorization': f'Bearer {api_key}'}
+        embed_client = OllamaEmbeddings(
+            model="nomic-embed-text",
+            base_url=url,
+            client_kwargs=client_kwargs
+        )
+        return embed_client.embed_query(query)
+    except Exception as e:
+        raise Exception(f"Could not connect to Ollama embedding endpoint at '{url}'. Error: {str(e)}")
+
+
+def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temperature=0.5, api_key=""):
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    url = base_url.rstrip("/")
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    # 1. Try Ollama Native /api/chat
+    try:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": sysprompt},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
+            ],
+            "stream": False,
+            "options": {"temperature": float(temperature)}
+        }
+        res = requests.post(f"{url}/api/chat", json=payload, headers=headers, timeout=50)
+        if res.ok:
+            data = res.json()
+            answer = data.get("message", {}).get("content", "")
+            total_duration = data.get("total_duration", 0) / 1e9
+            eval_count = data.get("eval_count", 0)
+            eval_duration = data.get("eval_duration", 1e9) / 1e9
+            tokens_per_sec = eval_count / eval_duration if eval_duration > 0 else 0
+            stats = {
+                "total_duration_sec": round(total_duration, 3),
+                "eval_count": eval_count,
+                "tokens_per_sec": round(tokens_per_sec, 2)
+            }
+            return answer, stats
+    except Exception:
+        pass
+
+    # 2. Try OpenAI-compatible /v1/chat/completions (for Cloud APIs or proxies)
+    try:
+        v1_payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": sysprompt},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
+            ],
+            "temperature": float(temperature)
+        }
+        res = requests.post(f"{url}/v1/chat/completions", json=v1_payload, headers=headers, timeout=50)
+        if res.ok:
+            v1_data = res.json()
+            answer = v1_data["choices"][0]["message"]["content"]
+            return answer, {"total_duration_sec": 0, "eval_count": 0, "tokens_per_sec": 0}
+    except Exception:
+        pass
+
+    # 3. Fallback to LangChain ChatOllama
+    try:
+        from langchain_ollama import ChatOllama
+        from langchain_core.prompts import PromptTemplate
+        client_kwargs = {}
+        if api_key:
+            client_kwargs['headers'] = {'Authorization': f'Bearer {api_key}'}
+        llm = ChatOllama(
+            model=model_name,
+            temperature=float(temperature),
+            base_url=url,
+            client_kwargs=client_kwargs
+        )
+        prompt_template = "{sysprompt}\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+        prompt = PromptTemplate.from_template(prompt_template)
+        chain = prompt | llm
+        response = chain.invoke({
+            "sysprompt": sysprompt,
+            "context": context,
+            "question": query
+        })
+        metadata = response.response_metadata or {}
+        total_duration = metadata.get('total_duration', 0) / 1e9
+        eval_count = metadata.get('eval_count', 0)
+        eval_duration = metadata.get('eval_duration', 1e9) / 1e9
+        tokens_per_sec = eval_count / eval_duration if eval_duration > 0 else 0
+        stats = {
+            "total_duration_sec": round(total_duration, 3),
+            "eval_count": eval_count,
+            "tokens_per_sec": round(tokens_per_sec, 2)
+        }
+        return response.content, stats
+    except Exception as e:
+        raise Exception(f"Failed to generate answer from Ollama endpoint '{url}'. Error: {str(e)}")
+
+
+# 3. Static File Routes
 @app.route("/")
 def home():
-    return send_file(os.path.join(BASE_DIR, "index.html"))
+    return send_from_directory(BASE_DIR, "index.html")
 
 @app.route("/index.html")
 def index_page():
-    return send_file(os.path.join(BASE_DIR, "index.html"))
+    return send_from_directory(BASE_DIR, "index.html")
 
 @app.route("/login.html")
 def login_page():
-    return send_file(os.path.join(BASE_DIR, "login.html"))
+    return send_from_directory(BASE_DIR, "login.html")
 
 @app.route("/signup.html")
 def signup_page():
-    return send_file(os.path.join(BASE_DIR, "signup.html"))
+    return send_from_directory(BASE_DIR, "signup.html")
 
 @app.route("/style.css")
 def serve_css():
-    return send_file(os.path.join(BASE_DIR, "style.css"))
+    return send_from_directory(BASE_DIR, "style.css", mimetype="text/css")
 
 @app.route("/script.js")
 def serve_js():
-    return send_file(os.path.join(BASE_DIR, "script.js"))
+    return send_from_directory(BASE_DIR, "script.js", mimetype="application/javascript")
 
-# 3. Route for user authentication
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    return jsonify({
+        "status": "ok",
+        "supabase_connected": supabase is not None,
+        "base_dir": BASE_DIR
+    })
+
+
+# 4. User Authentication Routes
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.json
+    if not supabase:
+        return jsonify({"success": False, "error": "Database not configured on server. Please check Supabase credentials in Vercel."}), 500
+
+    data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
 
@@ -67,7 +239,7 @@ def login():
 
         user = result.data[0]
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        
+
         if user.get("password_hash") != password_hash:
             return jsonify({"success": False, "error": "Invalid username or password."}), 401
 
@@ -76,12 +248,15 @@ def login():
 
     except Exception as e:
         print(f"Login error: {e}")
-        return jsonify({"success": False, "error": "An internal error occurred."}), 500
+        return jsonify({"success": False, "error": f"Authentication failed: {str(e)}"}), 500
 
-# 4. Route for user registration
+
 @app.route("/signup", methods=["POST"])
 def signup():
-    data = request.json
+    if not supabase:
+        return jsonify({"success": False, "error": "Database not configured on server. Please check Supabase credentials in Vercel."}), 500
+
+    data = request.get_json(silent=True) or {}
     first_name = data.get("first_name", "").strip()
     last_name = data.get("last_name", "").strip()
     email = data.get("email", "").strip()
@@ -104,30 +279,136 @@ def signup():
             "username": username,
             "password_hash": password_hash
         }
-        
-        supabase.table("UserDetails").insert(new_user).execute()
 
+        supabase.table("UserDetails").insert(new_user).execute()
         return jsonify({"success": True, "message": "Account created successfully."})
 
     except Exception as e:
         print(f"Signup error: {e}")
-        return jsonify({"success": False, "error": "An internal error occurred."}), 500
+        return jsonify({"success": False, "error": f"Signup failed: {str(e)}"}), 500
 
-# 5. Route for processing the AI questions
+
+# 5. Chat History Routes
+@app.route("/history", methods=["GET"])
+def get_chat_history():
+    if not supabase:
+        return jsonify({"success": False, "error": "Database not configured."}), 500
+
+    username = request.args.get("username", "").strip()
+    rag_id = request.args.get("rag_id", "").strip()
+
+    if not username:
+        return jsonify({"success": False, "error": "Username is required to fetch history."}), 400
+
+    try:
+        query = supabase.table("chat_history").select("*").eq("username", username)
+        if rag_id:
+            query = query.eq("rag_id", rag_id)
+
+        result = query.order("created_at", desc=False).execute()
+        return jsonify({"success": True, "messages": result.data or [], "cloud_synced": True})
+
+    except Exception as e:
+        print(f"Chat history fetch notice: {e}")
+        return jsonify({
+            "success": True,
+            "messages": [],
+            "cloud_synced": False,
+            "message": "Using local client storage."
+        })
+
+
+@app.route("/history", methods=["POST"])
+def save_chat_history():
+    if not supabase:
+        return jsonify({"success": False, "error": "Database not configured."}), 500
+
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    rag_id = data.get("rag_id", "default").strip()
+    messages_to_save = []
+
+    if "user_message" in data and "bot_message" in data:
+        messages_to_save.append({
+            "username": username,
+            "rag_id": rag_id,
+            "sender": "user",
+            "message": data.get("user_message", ""),
+            "stats": {},
+            "chunks": []
+        })
+        messages_to_save.append({
+            "username": username,
+            "rag_id": rag_id,
+            "sender": "bot",
+            "message": data.get("bot_message", ""),
+            "stats": data.get("stats", {}),
+            "chunks": data.get("chunks", [])
+        })
+    elif "message" in data and "sender" in data:
+        messages_to_save.append({
+            "username": username,
+            "rag_id": rag_id,
+            "sender": data.get("sender"),
+            "message": data.get("message", ""),
+            "stats": data.get("stats", {}),
+            "chunks": data.get("chunks", [])
+        })
+    else:
+        return jsonify({"success": False, "error": "Invalid history payload."}), 400
+
+    if not username:
+        return jsonify({"success": False, "error": "Username is required."}), 400
+
+    try:
+        supabase.table("chat_history").insert(messages_to_save).execute()
+        return jsonify({"success": True, "cloud_synced": True})
+    except Exception as e:
+        print(f"Chat history insert notice: {e}")
+        return jsonify({
+            "success": True,
+            "cloud_synced": False,
+            "message": "Saved to local client storage."
+        })
+
+
+@app.route("/history", methods=["DELETE"])
+def clear_chat_history():
+    if not supabase:
+        return jsonify({"success": False, "error": "Database not configured."}), 500
+
+    data = request.get_json(silent=True) or {}
+    username = data.get("username") or request.args.get("username", "").strip()
+    rag_id = data.get("rag_id") or request.args.get("rag_id", "").strip()
+
+    if not username:
+        return jsonify({"success": False, "error": "Username is required."}), 400
+
+    try:
+        query = supabase.table("chat_history").delete().eq("username", username)
+        if rag_id:
+            query = query.eq("rag_id", rag_id)
+        query.execute()
+        return jsonify({"success": True, "message": "History cleared successfully."})
+    except Exception as e:
+        print(f"Chat history clear error: {e}")
+        return jsonify({"success": True, "message": "Local history will be cleared.", "cloud_synced": False})
+
+
+# 6. Route for processing AI questions with RAG
 @app.route("/ask", methods=["POST"])
 def ask_question():
-    # READ OLLAMA VARIABLES INSIDE THE ROUTE FOR VERCEL COMPATIBILITY
-    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
+    if not supabase:
+        return jsonify({"error": "Supabase database connection is not configured on server."}), 500
 
-    # Safeguard: Ensure the URL has a protocol
-    if not OLLAMA_BASE_URL.startswith("http://") and not OLLAMA_BASE_URL.startswith("https://"):
-        OLLAMA_BASE_URL = "https://" + OLLAMA_BASE_URL
+    data = request.get_json(silent=True) or {}
+    query = data.get("query", "").strip()
+    rag_id = data.get("rag_id", "game_of_thrones").strip()
+    username = data.get("username", "").strip()
 
-    data = request.json
-    query = data.get("query")
-    rag_id = data.get("rag_id", "spiderman")
-    
+    OLLAMA_BASE_URL = (data.get("ollama_base_url") or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").strip()
+    OLLAMA_API_KEY = (data.get("ollama_api_key") or os.getenv("OLLAMA_API_KEY") or "").strip()
+
     rpc_functions = {
         "spiderman": "match_mainragvdb",
         "game_of_thrones": "match_mainragvdb",
@@ -145,22 +426,10 @@ def ask_question():
     sysprompt = data.get("sysprompt", "You are a helpful assistant. Use the following context to answer the user's question. If you don't know the answer based on the context, just say that you don't know.")
 
     try:
-        # Setup Auth headers for LangChain
-        client_kwargs = {}
-        if OLLAMA_API_KEY:
-            client_kwargs['headers'] = {'Authorization': f'Bearer {OLLAMA_API_KEY}'}
+        # 1. Generate query embedding
+        query_embedding = get_ollama_embedding(OLLAMA_BASE_URL, query, OLLAMA_API_KEY)
 
-        # Initialize clients inside the route
-        embeddings = OllamaEmbeddings(
-            model="nomic-embed-text", 
-            base_url=OLLAMA_BASE_URL,
-            client_kwargs=client_kwargs
-        )
-
-        # Generate query embedding
-        query_embedding = embeddings.embed_query(query)
-
-        # Search Vector Database
+        # 2. Search Supabase Vector Database
         result = supabase.rpc(
             rpc_name,
             {
@@ -170,64 +439,63 @@ def ask_question():
             }
         ).execute()
 
-        if not result.data:
-            return jsonify({
-                "answer": "No matches found in the database to answer this question.", 
-                "sources": [],
-                "chunks": [],
-                "stats": {}
-            })
-
         retrieved_context = ""
         sources = []
         chunks = []
-        for doc in result.data:
-            doc_id = doc.get('uid', doc.get('id', 'N/A'))
-            text_content = doc.get('text', doc.get('content', 'N/A'))
-            similarity = doc.get('similarity', 0.0)
-            
-            retrieved_context += f"{text_content}\n\n"
-            sources.append(doc_id)
-            
-            chunks.append({
-                "id": doc_id,
-                "similarity": round(similarity, 3),
-                "text": text_content[:500] + "..." if len(text_content) > 500 else text_content
-            })
 
-        # Setup LangChain LLM
-        llm = ChatOllama(
-            model=model_name, 
-            temperature=user_temperature, 
-            base_url=OLLAMA_BASE_URL,
-            client_kwargs=client_kwargs
-        )
-        
-        prompt_template = "{sysprompt}\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-        prompt = PromptTemplate.from_template(prompt_template)
-        chain = prompt | llm
+        if result.data:
+            for doc in result.data:
+                doc_id = doc.get('uid', doc.get('id', 'N/A'))
+                text_content = doc.get('text', doc.get('content', 'N/A'))
+                similarity = doc.get('similarity', 0.0)
 
-        # Generate response
-        response = chain.invoke({
-            "sysprompt": sysprompt,
-            "context": retrieved_context,
-            "question": query
-        })
+                retrieved_context += f"{text_content}\n\n"
+                sources.append(doc_id)
 
-        answer = response.content
+                chunks.append({
+                    "id": str(doc_id),
+                    "similarity": round(float(similarity), 3),
+                    "text": text_content[:500] + "..." if len(text_content) > 500 else text_content
+                })
 
-        # Extract Metadata
-        metadata = response.response_metadata or {}
-        total_duration = metadata.get('total_duration', 0) / 1e9
-        eval_count = metadata.get('eval_count', 0)
-        eval_duration = metadata.get('eval_duration', 1e9) / 1e9
-        tokens_per_sec = eval_count / eval_duration if eval_duration > 0 else 0
+        if not retrieved_context.strip():
+            answer = "No matching documents found in the knowledge base to answer this question. Try lowering the match threshold in Settings or asking a related question."
+            llm_stats = {"total_duration_sec": 0, "eval_count": 0, "tokens_per_sec": 0}
+        else:
+            # 3. Generate LLM Answer
+            answer, llm_stats = generate_ollama_chat(
+                base_url=OLLAMA_BASE_URL,
+                model_name=model_name,
+                sysprompt=sysprompt,
+                context=retrieved_context,
+                query=query,
+                temperature=user_temperature,
+                api_key=OLLAMA_API_KEY
+            )
 
-        llm_stats = {
-            "total_duration_sec": round(total_duration, 3),
-            "eval_count": eval_count,
-            "tokens_per_sec": round(tokens_per_sec, 2)
-        }
+        # 4. Auto-persist to database if username is provided
+        if username and supabase:
+            try:
+                supabase.table("chat_history").insert([
+                    {
+                        "username": username,
+                        "rag_id": rag_id,
+                        "sender": "user",
+                        "message": query,
+                        "stats": {},
+                        "chunks": []
+                    },
+                    {
+                        "username": username,
+                        "rag_id": rag_id,
+                        "sender": "bot",
+                        "message": answer,
+                        "stats": llm_stats,
+                        "chunks": chunks
+                    }
+                ]).execute()
+            except Exception as hist_err:
+                print(f"Chat history auto-save notice: {hist_err}")
 
         return jsonify({
             "answer": answer,
@@ -240,9 +508,11 @@ def ask_question():
         print("--- ERROR IN /ask ROUTE ---")
         traceback.print_exc()
         print("----------------------------")
-        # EXPLICITLY TELL THE USER WHAT URL VERCEL IS USING
-        error_msg = f"Connection Failed. Vercel tried using URL: {OLLAMA_BASE_URL}. Error: {str(e)}"
+        error_msg = f"Connection error: {str(e)}"
+        if "localhost" in OLLAMA_BASE_URL:
+            error_msg += " (Note: When running on Vercel cloud, localhost:11434 is not accessible. Please enter a public Cloud Ollama or Ngrok tunnel URL in the Settings modal ⚙️)."
         return jsonify({"error": error_msg}), 500
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
