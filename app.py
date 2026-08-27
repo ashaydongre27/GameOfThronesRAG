@@ -37,60 +37,91 @@ else:
 
 
 # 2. Helper functions for Ollama / Cloud AI API calls
+def normalize_url(base_url):
+    """
+    Strips any trailing /api, /v1, or / from the user-provided URL
+    so we always have a clean root like 'https://ollama.com' or 'http://localhost:11434'.
+    All endpoint paths (/api/embed, /api/chat, /v1/embeddings) are appended by the callers.
+    """
+    url = (base_url or "").strip()
+    # Remove all trailing slashes
+    while url.endswith("/"):
+        url = url[:-1]
+    # Add scheme if missing
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+    # Strip known API path suffixes so we never double them
+    for suffix in ["/api/v1", "/v1", "/api"]:
+        if url.endswith(suffix):
+            url = url[:-len(suffix)]
+            break
+    return url
+
+
 def get_ollama_embedding(base_url, query, api_key=""):
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    url = base_url.rstrip("/")
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "https://" + url
+    root_url = normalize_url(base_url)
+    last_error = ""
 
-    # Try standard Ollama /api/embeddings
+    # 1. Try Ollama /api/embeddings
     try:
         res = requests.post(
-            f"{url}/api/embeddings",
+            f"{root_url}/api/embeddings",
             json={"model": "nomic-embed-text", "prompt": query},
             headers=headers,
-            timeout=20
+            timeout=25
         )
         if res.ok:
             data = res.json()
             if "embedding" in data:
                 return data["embedding"]
-    except Exception:
-        pass
+        else:
+            last_error = f'path "/api/embeddings" {res.text[:200]} (status code: {res.status_code})'
+    except Exception as e:
+        last_error = str(e)
 
-    # Try Ollama /api/embed
+    # 2. Try Ollama /api/embed (newer Ollama versions)
     try:
         res = requests.post(
-            f"{url}/api/embed",
+            f"{root_url}/api/embed",
             json={"model": "nomic-embed-text", "input": query},
             headers=headers,
-            timeout=20
+            timeout=25
         )
         if res.ok:
             data = res.json()
             embeddings = data.get("embeddings", [])
             if embeddings:
                 return embeddings[0]
-    except Exception:
-        pass
-
-    # Fallback to LangChain if installed
-    try:
-        from langchain_ollama import OllamaEmbeddings
-        client_kwargs = {}
-        if api_key:
-            client_kwargs['headers'] = {'Authorization': f'Bearer {api_key}'}
-        embed_client = OllamaEmbeddings(
-            model="nomic-embed-text",
-            base_url=url,
-            client_kwargs=client_kwargs
-        )
-        return embed_client.embed_query(query)
+        else:
+            last_error = f'path "/api/embed" {res.text[:200]} (status code: {res.status_code})'
     except Exception as e:
-        raise Exception(f"Could not connect to Ollama embedding endpoint at '{url}'. Error: {str(e)}")
+        last_error = str(e)
+
+    # 3. Try OpenAI-compatible /v1/embeddings (Nomic AI, OpenRouter, cloud proxies)
+    try:
+        res = requests.post(
+            f"{root_url}/v1/embeddings",
+            json={"model": "nomic-embed-text", "input": query},
+            headers=headers,
+            timeout=25
+        )
+        if res.ok:
+            v1_data = res.json()
+            data_arr = v1_data.get("data", [])
+            if data_arr and "embedding" in data_arr[0]:
+                return data_arr[0]["embedding"]
+        else:
+            last_error = f'path "/v1/embeddings" {res.text[:200]} (status code: {res.status_code})'
+    except Exception as e:
+        last_error = str(e)
+
+    raise Exception(
+        f"Could not connect to Ollama embedding endpoint at '{root_url}'. Error: {last_error}"
+    )
 
 
 def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temperature=0.5, api_key=""):
@@ -98,9 +129,8 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    url = base_url.rstrip("/")
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "https://" + url
+    root_url = normalize_url(base_url)
+    last_error = ""
 
     # 1. Try Ollama Native /api/chat
     try:
@@ -113,7 +143,7 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
             "stream": False,
             "options": {"temperature": float(temperature)}
         }
-        res = requests.post(f"{url}/api/chat", json=payload, headers=headers, timeout=50)
+        res = requests.post(f"{root_url}/api/chat", json=payload, headers=headers, timeout=50)
         if res.ok:
             data = res.json()
             answer = data.get("message", {}).get("content", "")
@@ -127,10 +157,12 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
                 "tokens_per_sec": round(tokens_per_sec, 2)
             }
             return answer, stats
-    except Exception:
-        pass
+        else:
+            last_error = f"{res.status_code} {res.text[:150]}"
+    except Exception as e:
+        last_error = str(e)
 
-    # 2. Try OpenAI-compatible /v1/chat/completions (for Cloud APIs or proxies)
+    # 2. Try OpenAI-compatible /v1/chat/completions
     try:
         v1_payload = {
             "model": model_name,
@@ -140,48 +172,17 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
             ],
             "temperature": float(temperature)
         }
-        res = requests.post(f"{url}/v1/chat/completions", json=v1_payload, headers=headers, timeout=50)
+        res = requests.post(f"{root_url}/v1/chat/completions", json=v1_payload, headers=headers, timeout=50)
         if res.ok:
             v1_data = res.json()
             answer = v1_data["choices"][0]["message"]["content"]
             return answer, {"total_duration_sec": 0, "eval_count": 0, "tokens_per_sec": 0}
-    except Exception:
-        pass
-
-    # 3. Fallback to LangChain ChatOllama
-    try:
-        from langchain_ollama import ChatOllama
-        from langchain_core.prompts import PromptTemplate
-        client_kwargs = {}
-        if api_key:
-            client_kwargs['headers'] = {'Authorization': f'Bearer {api_key}'}
-        llm = ChatOllama(
-            model=model_name,
-            temperature=float(temperature),
-            base_url=url,
-            client_kwargs=client_kwargs
-        )
-        prompt_template = "{sysprompt}\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-        prompt = PromptTemplate.from_template(prompt_template)
-        chain = prompt | llm
-        response = chain.invoke({
-            "sysprompt": sysprompt,
-            "context": context,
-            "question": query
-        })
-        metadata = response.response_metadata or {}
-        total_duration = metadata.get('total_duration', 0) / 1e9
-        eval_count = metadata.get('eval_count', 0)
-        eval_duration = metadata.get('eval_duration', 1e9) / 1e9
-        tokens_per_sec = eval_count / eval_duration if eval_duration > 0 else 0
-        stats = {
-            "total_duration_sec": round(total_duration, 3),
-            "eval_count": eval_count,
-            "tokens_per_sec": round(tokens_per_sec, 2)
-        }
-        return response.content, stats
+        else:
+            last_error = f"{res.status_code} {res.text[:150]}"
     except Exception as e:
-        raise Exception(f"Failed to generate answer from Ollama endpoint '{url}'. Error: {str(e)}")
+        last_error = str(e)
+
+    raise Exception(f"Failed to generate answer from '{root_url}'. Details: {last_error}")
 
 
 # 3. Static File Routes
@@ -508,10 +509,7 @@ def ask_question():
         print("--- ERROR IN /ask ROUTE ---")
         traceback.print_exc()
         print("----------------------------")
-        error_msg = f"Connection error: {str(e)}"
-        if "localhost" in OLLAMA_BASE_URL:
-            error_msg += " (Note: When running on Vercel cloud, localhost:11434 is not accessible. Please enter a public Cloud Ollama or Ngrok tunnel URL in the Settings modal ⚙️)."
-        return jsonify({"error": error_msg}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
