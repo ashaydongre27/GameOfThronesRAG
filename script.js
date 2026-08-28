@@ -1,6 +1,125 @@
+// ==========================================================================
+// Lima RAG Assistant - Midnight Glass Brutalist UI Controller
+// ==========================================================================
+
 document.addEventListener('DOMContentLoaded', () => {
+
     // -------------------------------------------------------------
-    // 1. Authentication Handlers (Login & Signup)
+    // 1. WebGL Canvas Shader Background
+    // -------------------------------------------------------------
+    function initWebGLShader() {
+        const canvas = document.getElementById('glcanvas');
+        if (!canvas) return;
+        const gl = canvas.getContext('webgl');
+        if (!gl) return;
+
+        const vsSource = `
+            attribute vec4 aVertexPosition;
+            varying vec2 v_texCoord;
+            void main() {
+                gl_Position = aVertexPosition;
+                v_texCoord = aVertexPosition.xy * 0.5 + 0.5;
+            }
+        `;
+
+        const fsSource = `
+            precision highp float;
+            varying vec2 v_texCoord;
+            uniform float u_time;
+            uniform vec2 u_resolution;
+
+            void main() {
+                vec2 uv = v_texCoord;
+                vec3 color1 = vec3(0.04, 0.07, 0.15); // Deep Indigo
+                vec3 color2 = vec3(0.12, 0.16, 0.23); // Slate
+                vec3 color3 = vec3(0.06, 0.09, 0.20); // Mid-depth
+
+                float noise1 = sin(uv.x * 3.0 + u_time * 0.2) * cos(uv.y * 2.0 + u_time * 0.3);
+                float noise2 = cos(uv.y * 4.0 - u_time * 0.1) * sin(uv.x * 2.5 + u_time * 0.2);
+
+                vec3 color = mix(color1, color2, noise1 * 0.5 + 0.5);
+                color = mix(color, color3, noise2 * 0.5 + 0.5);
+
+                float dist = length(uv - 0.5);
+                color *= 1.0 - dist * 0.45;
+
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+        if (!vertexShader || !fragmentShader) return;
+
+        const shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) return;
+
+        const programInfo = {
+            program: shaderProgram,
+            attribLocations: {
+                vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+            },
+            uniformLocations: {
+                time: gl.getUniformLocation(shaderProgram, 'u_time'),
+                resolution: gl.getUniformLocation(shaderProgram, 'u_resolution'),
+            },
+        };
+
+        const positions = [
+             1.0,  1.0,
+            -1.0,  1.0,
+             1.0, -1.0,
+            -1.0, -1.0,
+        ];
+
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+        function render(now) {
+            now *= 0.001;
+            const displayWidth = canvas.clientWidth;
+            const displayHeight = canvas.clientHeight;
+
+            if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+                canvas.width = displayWidth;
+                canvas.height = displayHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
+
+            gl.useProgram(programInfo.program);
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+            gl.uniform1f(programInfo.uniformLocations.time, now);
+            gl.uniform2f(programInfo.uniformLocations.resolution, canvas.width, canvas.height);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    }
+
+    initWebGLShader();
+
+
+    // -------------------------------------------------------------
+    // 2. Authentication Handlers (Login & Signup)
     // -------------------------------------------------------------
     const loginForm = document.getElementById('loginForm');
     if (loginForm) {
@@ -13,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             errorEl.textContent = '';
             loginBtn.disabled = true;
-            loginBtn.textContent = 'Signing in...';
+            loginBtn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[18px]">refresh</span> Authenticating...';
 
             try {
                 const response = await fetch('/login', {
@@ -34,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 errorEl.textContent = 'Connection error. Is the server running?';
             } finally {
                 loginBtn.disabled = false;
-                loginBtn.textContent = 'Login';
+                loginBtn.innerHTML = '<span>Access System</span><span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
             }
         });
         return;
@@ -54,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             errorEl.textContent = '';
             signupBtn.disabled = true;
-            signupBtn.textContent = 'Creating account...';
+            signupBtn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[18px]">refresh</span> Initializing Account...';
 
             try {
                 const response = await fetch('/signup', {
@@ -64,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 const data = await response.json();
                 if (data.success) {
-                    alert('Account created successfully! Please log in.');
+                    alert('Account initialized successfully! Please log in.');
                     window.location.href = 'login.html';
                 } else {
                     errorEl.textContent = data.error || 'Signup failed. Please try again.';
@@ -73,14 +192,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 errorEl.textContent = 'Connection error. Is the server running?';
             } finally {
                 signupBtn.disabled = false;
-                signupBtn.textContent = 'Sign Up';
+                signupBtn.innerHTML = '<span>Create Authorized Account</span><span class="material-symbols-outlined text-[18px]">check_circle</span>';
             }
         });
         return;
     }
 
+
     // -------------------------------------------------------------
-    // 2. Authentication & Session Verification
+    // 3. User Session Verification
     // -------------------------------------------------------------
     const isAuth = sessionStorage.getItem('isAuthenticated') || localStorage.getItem('currentUser');
     if (!isAuth) {
@@ -95,42 +215,69 @@ document.addEventListener('DOMContentLoaded', () => {
         currentUser = { username: 'User' };
     }
 
-    // Set user greeting / badge
     const sidebarUsername = document.getElementById('sidebarUsername');
     const welcomeGreeting = document.getElementById('welcomeGreeting');
+
     if (sidebarUsername && currentUser.username) {
-        sidebarUsername.textContent = currentUser.first_name ? `${currentUser.first_name}` : currentUser.username;
+        sidebarUsername.textContent = currentUser.first_name ? `${currentUser.first_name} ${currentUser.last_name || ''}`.trim() : currentUser.username;
     }
     if (welcomeGreeting && currentUser.first_name) {
         welcomeGreeting.textContent = `Welcome back, ${currentUser.first_name}!`;
     }
 
-    // -------------------------------------------------------------
-    // 3. Themes & Available RAGs
-    // -------------------------------------------------------------
-    const themes = {
-        midnight: { c1: "#0f172a", c2: "#1e293b" },
-        dark: { c1: "#000000", c2: "#121212" },
-        cosmic: { c1: "#6a11cb", c2: "#2575fc" },
-        ocean: { c1: "#2b5876", c2: "#4e4376" },
-        sunset: { c1: "#ff512f", c2: "#dd2476" },
-        forest: { c1: "#11998e", c2: "#38ef7d" },
-        light: { c1: "#e2e8f0", c2: "#cbd5e1" }
-    };
 
+    // -------------------------------------------------------------
+    // 4. Available Knowledge Bases (RAG Contexts)
+    // -------------------------------------------------------------
     const availableRAGs = [
-        { id: "game_of_thrones", name: "Game of Thrones", desc: "Westeros and beyond — houses, battles, lore, and the complete saga.", icon: "fa-dragon" },
-        { id: "spiderman", name: "Spiderman", desc: "Everything about the Spiderman universe — characters, storylines, and lore.", icon: "fa-spider" },
-        { id: "apollo_11", name: "Apollo 11", desc: "The historic Moon landing mission — crew, timeline, and legacy.", icon: "fa-rocket" }
+        {
+            id: "game_of_thrones",
+            name: "Game of Thrones",
+            desc: "Comprehensive lore, character arcs, and political machinations of Westeros.",
+            icon: "castle",
+            accentColor: "#f59e0b",
+            page: "game-of-thrones.html"
+        },
+        {
+            id: "spiderman",
+            name: "Spider-Man",
+            desc: "Multiversal index of Peter Parker variants, rogues gallery profiles, and comic continuity.",
+            icon: "sports_martial_arts",
+            accentColor: "#f43f5e",
+            page: "spiderman.html"
+        },
+        {
+            id: "apollo_11",
+            name: "Apollo 11",
+            desc: "Mission transcripts, technical schematics of the Saturn V, and historical lunar landing telemetry.",
+            icon: "rocket_launch",
+            accentColor: "#38bdf8",
+            page: "apollo-11.html"
+        }
     ];
 
-    let currentRAG = null;
+    // Identify current page context
+    const pageRagId = document.body.getAttribute('data-page-rag');
+    const urlParams = new URLSearchParams(window.location.search);
+    const activeRagId = pageRagId || urlParams.get('rag');
+    let currentRAG = availableRAGs.find(r => r.id === activeRagId) || null;
+
+
+    // -------------------------------------------------------------
+    // 5. System Settings Management
+    // -------------------------------------------------------------
+    const themeProfiles = {
+        midnight: { start: "#0f172a", end: "#1e293b", primary: "#adc6ff" },
+        dark: { start: "#000000", end: "#121212", primary: "#60a5fa" },
+        cosmic: { start: "#1e1b4b", end: "#312e81", primary: "#c084fc" },
+        ocean: { start: "#0c4a6e", end: "#1e293b", primary: "#38bdf8" },
+        sunset: { start: "#4c0519", end: "#1e293b", primary: "#fb7185" },
+        forest: { start: "#064e3b", end: "#0f172a", primary: "#4edea3" },
+        light: { start: "#e2e8f0", end: "#cbd5e1", primary: "#2563eb" }
+    };
+
     let currentSettings = {
         themeProfile: "midnight",
-        color1: "#0f172a",
-        color2: "#1e293b",
-        ollama_base_url: "",
-        ollama_api_key: "",
         usermodel: "gemma4:31b-cloud",
         usertemperature: 0.5,
         umatch_count: 10,
@@ -138,27 +285,13 @@ document.addEventListener('DOMContentLoaded', () => {
         sysprompt: "You are a helpful assistant. Use the following context to answer the user's question. If you don't know the answer based on the context, just say that you don't know."
     };
 
-    // DOM Elements
-    const homeBtn = document.getElementById('homeBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const homeView = document.getElementById('homeView');
-    const chatView = document.getElementById('chatView');
-    const viewTitle = document.getElementById('viewTitle');
-    const ragContextLabel = document.getElementById('ragContextLabel');
-    const clearChatBtn = document.getElementById('clearChatBtn');
-    const ragGrid = document.getElementById('ragGrid');
-    const chatArea = document.getElementById('chatArea');
-    const userInput = document.getElementById('userInput');
-    const sendBtn = document.getElementById('sendBtn');
-    const settingsBtn = document.getElementById('settingsBtn');
-    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
     const settingsModal = document.getElementById('settingsModal');
+    const settingsBtn = document.getElementById('settingsBtn');
+    const mobileSettingsBtn = document.getElementById('mobileSettingsBtn');
+    const topbarSettingsBtn = document.getElementById('topbarSettingsBtn');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
     const saveSettingsBtn = document.getElementById('saveSettingsBtn');
     const themeProfileSelect = document.getElementById('themeProfile');
-    const color1Input = document.getElementById('color1');
-    const color2Input = document.getElementById('color2');
-    const ollamaBaseUrlInput = document.getElementById('ollama_base_url');
-    const ollamaApiKeyInput = document.getElementById('ollama_api_key');
     const usermodelInput = document.getElementById('usermodel');
     const usertemperatureInput = document.getElementById('usertemperature');
     const tempValSpan = document.getElementById('tempVal');
@@ -167,16 +300,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const threshValSpan = document.getElementById('threshVal');
     const syspromptInput = document.getElementById('sysprompt');
 
-    // -------------------------------------------------------------
-    // 4. Settings Management
-    // -------------------------------------------------------------
     function loadSettings() {
         const saved = localStorage.getItem('ragSettings');
         if (saved) {
             try {
                 currentSettings = { ...currentSettings, ...JSON.parse(saved) };
             } catch (e) {
-                console.error("Error loading settings:", e);
+                console.error("Settings load error:", e);
             }
         }
         applySettingsToUI();
@@ -185,10 +315,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applySettingsToUI() {
         if (themeProfileSelect) themeProfileSelect.value = currentSettings.themeProfile || "midnight";
-        if (color1Input) color1Input.value = currentSettings.color1 || "#0f172a";
-        if (color2Input) color2Input.value = currentSettings.color2 || "#1e293b";
-        if (ollamaBaseUrlInput) ollamaBaseUrlInput.value = currentSettings.ollama_base_url || "";
-        if (ollamaApiKeyInput) ollamaApiKeyInput.value = currentSettings.ollama_api_key || "";
         if (usermodelInput) usermodelInput.value = currentSettings.usermodel || "gemma4:31b-cloud";
         if (usertemperatureInput) usertemperatureInput.value = currentSettings.usertemperature;
         if (tempValSpan) tempValSpan.textContent = currentSettings.usertemperature;
@@ -199,58 +325,111 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function applyTheme() {
-        document.documentElement.style.setProperty('--gradient-start', currentSettings.color1 || "#0f172a");
-        document.documentElement.style.setProperty('--gradient-end', currentSettings.color2 || "#1e293b");
+        const profile = themeProfiles[currentSettings.themeProfile] || themeProfiles.midnight;
+        document.documentElement.style.setProperty('--gradient-start', profile.start);
+        document.documentElement.style.setProperty('--gradient-end', profile.end);
+        document.documentElement.style.setProperty('--primary', profile.primary);
     }
 
-    // -------------------------------------------------------------
-    // 5. RAG Cards & Navigation
-    // -------------------------------------------------------------
-    function renderRAGs() {
-        if (!ragGrid) return;
-        ragGrid.innerHTML = '';
-        availableRAGs.forEach(rag => {
-            const card = document.createElement('div');
-            card.className = 'rag-card';
-            card.innerHTML = `
-                <i class="fas ${rag.icon}"></i>
-                <h3>${rag.name}</h3>
-                <p>${rag.desc}</p>
-                <div class="rag-card-footer">
-                    <span class="rag-status"><i class="fas fa-comments"></i> Open Chat</span>
-                </div>
-            `;
-            card.addEventListener('click', () => selectRAG(rag));
-            ragGrid.appendChild(card);
+    function toggleThemeQuick() {
+        const profileKeys = Object.keys(themeProfiles);
+        const currentIndex = profileKeys.indexOf(currentSettings.themeProfile);
+        const nextProfile = profileKeys[(currentIndex + 1) % profileKeys.length];
+        currentSettings.themeProfile = nextProfile;
+        if (themeProfileSelect) themeProfileSelect.value = nextProfile;
+        localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
+        applyTheme();
+    }
+
+    // Modal Events
+    const openSettings = () => settingsModal && settingsModal.classList.remove('hidden');
+    const closeSettings = () => settingsModal && settingsModal.classList.add('hidden');
+
+    if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+    if (mobileSettingsBtn) mobileSettingsBtn.addEventListener('click', openSettings);
+    if (topbarSettingsBtn) topbarSettingsBtn.addEventListener('click', openSettings);
+    if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', closeSettings);
+
+    if (settingsModal) {
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) closeSettings();
         });
     }
 
-    function showHome() {
-        homeView.classList.remove('hidden');
-        chatView.classList.add('hidden');
-        viewTitle.textContent = "Home";
-        ragContextLabel.classList.add('hidden');
-        if (clearChatBtn) clearChatBtn.classList.add('hidden');
-        homeBtn.classList.add('active');
-        currentRAG = null;
+    if (usertemperatureInput && tempValSpan) {
+        usertemperatureInput.addEventListener('input', (e) => tempValSpan.textContent = e.target.value);
+    }
+    if (umatchThresholdInput && threshValSpan) {
+        umatchThresholdInput.addEventListener('input', (e) => threshValSpan.textContent = e.target.value);
     }
 
-    async function selectRAG(rag) {
-        currentRAG = rag;
-        homeView.classList.add('hidden');
-        chatView.classList.remove('hidden');
-        viewTitle.textContent = rag.name;
-        ragContextLabel.textContent = "Active Knowledge Base";
-        ragContextLabel.classList.remove('hidden');
-        if (clearChatBtn) clearChatBtn.classList.remove('hidden');
-        homeBtn.classList.remove('active');
-
-        await loadChatHistory(rag.id, rag.name);
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', () => {
+            currentSettings = {
+                themeProfile: themeProfileSelect.value,
+                usermodel: usermodelInput.value,
+                usertemperature: parseFloat(usertemperatureInput.value),
+                umatch_count: parseInt(umatchCountInput.value, 10),
+                umatch_threshold: parseFloat(umatchThresholdInput.value),
+                sysprompt: syspromptInput.value
+            };
+            localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
+            applyTheme();
+            closeSettings();
+        });
     }
 
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const mobileThemeToggle = document.getElementById('mobileThemeToggle');
+    if (themeToggleBtn) themeToggleBtn.addEventListener('click', toggleThemeQuick);
+    if (mobileThemeToggle) mobileThemeToggle.addEventListener('click', toggleThemeQuick);
+
+    // Mobile Sidebar Drawer Handlers
+    const appSidebar = document.getElementById('appSidebar');
+    const mobileSidebarBtn = document.getElementById('mobileSidebarBtn');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+    function openMobileSidebar() {
+        if (appSidebar) {
+            appSidebar.classList.remove('-translate-x-full');
+            appSidebar.classList.add('translate-x-0');
+        }
+        if (sidebarOverlay) sidebarOverlay.classList.remove('hidden');
+    }
+
+    function closeMobileSidebar() {
+        if (appSidebar) {
+            appSidebar.classList.remove('translate-x-0');
+            appSidebar.classList.add('-translate-x-full');
+        }
+        if (sidebarOverlay) sidebarOverlay.classList.add('hidden');
+    }
+
+    if (mobileSidebarBtn) mobileSidebarBtn.addEventListener('click', openMobileSidebar);
+    if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeMobileSidebar);
+
+    // Logout Events
+    const handleLogout = () => {
+        sessionStorage.clear();
+        localStorage.removeItem('currentUser');
+        window.location.href = 'login.html';
+    };
+
+    const logoutBtn = document.getElementById('logoutBtn');
+    const mobileLogoutBtn = document.getElementById('mobileLogoutBtn');
+    if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+    if (mobileLogoutBtn) mobileLogoutBtn.addEventListener('click', handleLogout);
+
+
     // -------------------------------------------------------------
-    // 6. Chat History Management (Local & Supabase Database)
+    // 6. Chat History Management (Local & Supabase Sync)
     // -------------------------------------------------------------
+    const chatArea = document.getElementById('chatArea');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const chatForm = document.getElementById('chat-form');
+    const clearChatBtn = document.getElementById('clearChatBtn');
+
     function getLocalHistoryKey(ragId) {
         const uname = currentUser ? currentUser.username : 'guest';
         return `chat_history_${uname}_${ragId}`;
@@ -269,14 +448,20 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             localStorage.setItem(getLocalHistoryKey(ragId), JSON.stringify(historyArray));
         } catch (e) {
-            console.error("Local storage error:", e);
+            console.error("Local storage save error:", e);
         }
     }
 
     async function loadChatHistory(ragId, ragName) {
-        chatArea.innerHTML = '';
+        if (!chatArea) return;
+        const msgContainer = chatArea.querySelector('.max-w-\\[900px\\]') || chatArea;
 
-        // 1. Load locally first for instant display
+        // Keep the welcome header, clear previous messages
+        const welcomeHeader = msgContainer.querySelector('.chat-bubble-enter');
+        msgContainer.innerHTML = '';
+        if (welcomeHeader) msgContainer.appendChild(welcomeHeader);
+
+        // 1. Instant load from local storage
         const localHistory = getLocalHistory(ragId);
         if (localHistory && localHistory.length > 0) {
             localHistory.forEach(msg => {
@@ -284,16 +469,16 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // 2. Query cloud database in background to synchronize
+        // 2. Query cloud database in background for multi-device sync
         if (currentUser && currentUser.username) {
             try {
                 const res = await fetch(`/history?username=${encodeURIComponent(currentUser.username)}&rag_id=${encodeURIComponent(ragId)}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
-                        // If cloud returned history and it's newer/different, re-render
                         if (JSON.stringify(data.messages) !== JSON.stringify(localHistory)) {
-                            chatArea.innerHTML = '';
+                            msgContainer.innerHTML = '';
+                            if (welcomeHeader) msgContainer.appendChild(welcomeHeader);
                             data.messages.forEach(msg => {
                                 appendMessage(msg.message, msg.sender, msg.stats, msg.chunks, false);
                             });
@@ -302,19 +487,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             } catch (err) {
-                console.warn("Could not sync remote chat history:", err);
+                console.warn("History sync notice:", err);
             }
-        }
-
-        // If after checking both, chat is still empty, add default welcome message
-        if (chatArea.children.length === 0) {
-            appendMessage(
-                `Loaded context: <strong>${ragName}</strong>. Ask me anything about it! Your conversation history will be saved here.`,
-                'bot',
-                null,
-                null,
-                false
-            );
         }
 
         chatArea.scrollTop = chatArea.scrollHeight;
@@ -324,7 +498,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!currentRAG) return;
         const ragId = currentRAG.id;
 
-        // 1. Update local cache
         const history = getLocalHistory(ragId);
         const userMsg = { sender: 'user', message: userQuery, created_at: new Date().toISOString() };
         const botMsg = { sender: 'bot', message: botAnswer, stats: stats, chunks: chunks, created_at: new Date().toISOString() };
@@ -332,7 +505,6 @@ document.addEventListener('DOMContentLoaded', () => {
         history.push(botMsg);
         saveLocalHistory(ragId, history);
 
-        // 2. Persist to backend Supabase
         if (currentUser && currentUser.username) {
             try {
                 await fetch('/history', {
@@ -348,20 +520,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                 });
             } catch (err) {
-                console.warn("Error posting history to server:", err);
+                console.warn("Remote history save notice:", err);
             }
         }
     }
 
     async function handleClearChat() {
         if (!currentRAG) return;
-        const confirmClear = confirm(`Are you sure you want to clear chat history for ${currentRAG.name}?`);
+        const confirmClear = confirm(`Clear conversation history for ${currentRAG.name}?`);
         if (!confirmClear) return;
 
-        // Clear local storage
         saveLocalHistory(currentRAG.id, []);
 
-        // Clear cloud database
         if (currentUser && currentUser.username) {
             try {
                 await fetch('/history', {
@@ -373,118 +543,131 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                 });
             } catch (err) {
-                console.warn("Error deleting remote history:", err);
+                console.warn("Remote delete notice:", err);
             }
         }
 
-        // Reset chat view
-        chatArea.innerHTML = '';
-        appendMessage(
-            `Conversation cleared for <strong>${currentRAG.name}</strong>. Ask a new question below!`,
-            'bot',
-            null,
-            null,
-            false
-        );
+        if (chatArea) {
+            const msgContainer = chatArea.querySelector('.max-w-\\[900px\\]') || chatArea;
+            const welcomeHeader = msgContainer.querySelector('.chat-bubble-enter');
+            msgContainer.innerHTML = '';
+            if (welcomeHeader) msgContainer.appendChild(welcomeHeader);
+            appendMessage(`Conversation cleared for <strong>${currentRAG.name}</strong>. Ask a new question below!`, 'bot', null, null, false);
+        }
     }
 
+    if (clearChatBtn) {
+        clearChatBtn.addEventListener('click', handleClearChat);
+    }
+
+
     // -------------------------------------------------------------
-    // 7. Message Rendering
+    // 7. Message Rendering (Brutalist Glass Style)
     // -------------------------------------------------------------
     function appendMessage(text, sender, stats = null, chunks = null, autoScroll = true) {
+        if (!chatArea) return;
+        const msgContainer = chatArea.querySelector('.max-w-\\[900px\\]') || chatArea;
         const msgDiv = document.createElement('div');
-        msgDiv.classList.add('message', sender);
-
-        const contentDiv = document.createElement('div');
-        contentDiv.classList.add('message-content');
-        contentDiv.innerHTML = text;
-        msgDiv.appendChild(contentDiv);
 
         const hasStats = stats && typeof stats === 'object' && Object.keys(stats).length > 0;
         const hasChunks = Array.isArray(chunks) && chunks.length > 0;
 
-        if (hasStats || hasChunks) {
-            const metaDiv = document.createElement('div');
-            metaDiv.className = 'meta-dropdown';
+        if (sender === 'user') {
+            msgDiv.className = 'flex flex-col gap-1 max-w-[85%] self-end chat-bubble-enter-right';
+            msgDiv.innerHTML = `
+                <div class="flex items-center gap-1.5 text-on-surface-variant mb-0.5 justify-end">
+                    <span class="text-[11px] font-semibold uppercase tracking-wider text-primary">${currentUser ? (currentUser.first_name || currentUser.username) : 'User'}</span>
+                    <span class="material-symbols-outlined text-[15px] text-primary">person</span>
+                </div>
+                <div class="bg-primary/10 border border-primary/30 backdrop-blur-xl p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words">
+                    ${text}
+                </div>
+            `;
+        } else {
+            msgDiv.className = 'flex flex-col gap-1 max-w-[85%] self-start chat-bubble-enter-left';
 
-            const toggleBtn = document.createElement('button');
-            toggleBtn.className = 'meta-toggle';
-            toggleBtn.innerHTML = `<i class="fas fa-chevron-down"></i> Response Details`;
-
-            const metaContent = document.createElement('div');
-            metaContent.className = 'meta-content hidden';
-
-            if (hasStats && stats.total_duration_sec !== undefined) {
-                const statsWrapper = document.createElement('div');
-                statsWrapper.className = 'meta-stats';
-                statsWrapper.innerHTML = `
-                    <div class="meta-item">
-                        <span>Total Time</span>
-                        <strong>${stats.total_duration_sec} sec</strong>
-                    </div>
-                    <div class="meta-item">
-                        <span>Tokens Generated</span>
-                        <strong>${stats.eval_count || 0}</strong>
-                    </div>
-                    <div class="meta-item">
-                        <span>Speed</span>
-                        <strong>${stats.tokens_per_sec || 0} tok/sec</strong>
-                    </div>
-                `;
-                metaContent.appendChild(statsWrapper);
-            }
-
-            if (hasChunks) {
-                const chunksWrapper = document.createElement('div');
-                chunksWrapper.className = 'meta-chunks';
-                chunksWrapper.innerHTML = '<span>Matched Chunks</span>';
-
-                const chunkList = document.createElement('div');
-                chunkList.className = 'chunk-list';
-                chunks.forEach((chunk, index) => {
-                    const chunkItem = document.createElement('div');
-                    chunkItem.className = 'chunk-item';
-                    chunkItem.innerHTML = `
-                        <div class="chunk-header">Chunk ${index + 1} (ID: ${chunk.id} | Sim: ${chunk.similarity})</div>
-                        <div class="chunk-text">${chunk.text}</div>
+            let detailsHtml = '';
+            if (hasStats || hasChunks) {
+                let statsHtml = '';
+                if (hasStats && stats.total_duration_sec !== undefined) {
+                    statsHtml = `
+                        <div class="grid grid-cols-3 gap-2 pb-2 mb-2 border-b border-glass-border/30 font-mono text-[11px] text-on-surface-variant">
+                            <div>Latency: <strong class="text-primary">${stats.total_duration_sec}s</strong></div>
+                            <div>Tokens: <strong class="text-primary">${stats.eval_count || 0}</strong></div>
+                            <div>Speed: <strong class="text-primary">${stats.tokens_per_sec || 0} t/s</strong></div>
+                        </div>
                     `;
-                    chunkList.appendChild(chunkItem);
-                });
-                chunksWrapper.appendChild(chunkList);
-                metaContent.appendChild(chunksWrapper);
+                }
+
+                let chunksHtml = '';
+                if (hasChunks) {
+                    chunksHtml = `
+                        <div class="space-y-2 mt-2">
+                            <div class="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">Matched Vector Chunks (${chunks.length}):</div>
+                            ${chunks.map((c, i) => `
+                                <div class="p-2 bg-surface-container/60 border border-glass-border/40 text-xs font-mono">
+                                    <div class="flex justify-between text-primary font-bold mb-1">
+                                        <span>Chunk ${i + 1} (ID: ${c.id})</span>
+                                        <span>Sim: ${c.similarity}</span>
+                                    </div>
+                                    <div class="text-on-surface-variant font-sans text-xs line-clamp-3 leading-relaxed">${c.text}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+
+                detailsHtml = `
+                    <details class="mt-3 border-t border-glass-border/40 pt-2">
+                        <summary class="flex items-center justify-between text-on-surface-variant hover:text-primary text-[11px] font-semibold uppercase tracking-wider select-none outline-none py-1">
+                            <span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">insights</span> Response Metrics & Chunks</span>
+                            <span class="material-symbols-outlined text-[16px] summary-icon">expand_more</span>
+                        </summary>
+                        <div class="details-content">
+                            <div class="details-inner pt-2">
+                                ${statsHtml}
+                                ${chunksHtml}
+                            </div>
+                        </div>
+                    </details>
+                `;
             }
 
-            toggleBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                metaContent.classList.toggle('hidden');
-                toggleBtn.classList.toggle('open');
-            });
-
-            metaDiv.appendChild(toggleBtn);
-            metaDiv.appendChild(metaContent);
-            msgDiv.appendChild(metaDiv);
+            msgDiv.innerHTML = `
+                <div class="flex items-center gap-1.5 text-on-surface-variant mb-0.5">
+                    <span class="material-symbols-outlined text-[15px] text-primary">smart_toy</span>
+                    <span class="text-[11px] font-semibold uppercase tracking-wider">Lima RAG</span>
+                </div>
+                <div class="bg-glass-panel border border-glass-border backdrop-blur-xl p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words">
+                    ${text}
+                    ${detailsHtml}
+                </div>
+            `;
         }
 
-        chatArea.appendChild(msgDiv);
+        msgContainer.appendChild(msgDiv);
         if (autoScroll) {
             chatArea.scrollTop = chatArea.scrollHeight;
         }
         return msgDiv;
     }
 
+
     // -------------------------------------------------------------
-    // 8. Sending Questions & API Interaction
+    // 8. Sending Questions & API Interaction (/ask)
     // -------------------------------------------------------------
-    async function sendMessage() {
+    async function sendMessage(e) {
+        if (e) e.preventDefault();
+        if (!userInput || !currentRAG) return;
+
         const query = userInput.value.trim();
-        if (!query || !currentRAG) return;
+        if (!query) return;
 
         appendMessage(query, 'user');
         userInput.value = '';
-        userInput.style.height = 'auto';
+        userInput.style.height = '44px';
 
-        const typingMsg = appendMessage('<i class="fas fa-spinner fa-spin"></i> Thinking...', 'bot');
-        typingMsg.classList.add('typing');
+        const typingMsg = appendMessage('<span class="material-symbols-outlined animate-spin text-[16px] mr-1 align-middle">refresh</span> Retrieving context and formulating answer...', 'bot');
 
         try {
             const response = await fetch('/ask', {
@@ -498,28 +681,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     usertemperature: currentSettings.usertemperature,
                     umatch_count: currentSettings.umatch_count,
                     umatch_threshold: currentSettings.umatch_threshold,
-                    sysprompt: currentSettings.sysprompt,
-                    ollama_base_url: currentSettings.ollama_base_url,
-                    ollama_api_key: currentSettings.ollama_api_key
+                    sysprompt: currentSettings.sysprompt
                 })
             });
-
-            const contentType = response.headers.get("content-type");
-            if (!contentType || !contentType.includes("application/json")) {
-                const errorText = await response.text();
-                console.error("Server returned non-JSON response:", errorText);
-                throw new Error(`Server returned status ${response.status}. Please check server logs.`);
-            }
 
             const data = await response.json();
             typingMsg.remove();
 
             if (!response.ok || data.error) {
                 const errorMsg = data.error || `Server error (${response.status})`;
-                appendMessage(`⚠️ <strong>Error:</strong> ${errorMsg}`, 'bot');
+                appendMessage(`⚠️ <strong>System Notice:</strong> ${errorMsg}`, 'bot');
             } else {
                 appendMessage(data.answer, 'bot', data.stats, data.chunks);
-                // Persist turn to chat history
                 persistMessageTurn(query, data.answer, data.stats, data.chunks);
             }
         } catch (error) {
@@ -528,81 +701,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // -------------------------------------------------------------
-    // 9. Event Listeners
-    // -------------------------------------------------------------
-    homeBtn.addEventListener('click', showHome);
-
-    if (clearChatBtn) {
-        clearChatBtn.addEventListener('click', handleClearChat);
+    if (chatForm) {
+        chatForm.addEventListener('submit', sendMessage);
+    }
+    if (sendBtn && !chatForm) {
+        sendBtn.addEventListener('click', sendMessage);
     }
 
-    logoutBtn.addEventListener('click', () => {
-        sessionStorage.clear();
-        localStorage.removeItem('currentUser');
-        window.location.href = 'login.html';
-    });
+    if (userInput) {
+        // Auto-expand textarea
+        userInput.addEventListener('input', function () {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+            if (this.value === '') {
+                this.style.height = '44px';
+            }
+        });
 
-    // Settings Modal Listeners
-    settingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-    closeSettingsBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
-    settingsModal.addEventListener('click', (e) => {
-        if (e.target === settingsModal) settingsModal.classList.add('hidden');
-    });
-
-    if (usertemperatureInput && tempValSpan) {
-        usertemperatureInput.addEventListener('input', (e) => tempValSpan.textContent = e.target.value);
+        // Enter key to send (Shift+Enter for newline)
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
     }
-    if (umatchThresholdInput && threshValSpan) {
-        umatchThresholdInput.addEventListener('input', (e) => threshValSpan.textContent = e.target.value);
-    }
 
-    themeProfileSelect.addEventListener('change', (e) => {
-        const selected = e.target.value;
-        if (selected !== "custom" && themes[selected]) {
-            color1Input.value = themes[selected].c1;
-            color2Input.value = themes[selected].c2;
-        }
-    });
-
-    color1Input.addEventListener('input', () => themeProfileSelect.value = "custom");
-    color2Input.addEventListener('input', () => themeProfileSelect.value = "custom");
-
-    saveSettingsBtn.addEventListener('click', () => {
-        currentSettings = {
-            themeProfile: themeProfileSelect.value,
-            color1: color1Input.value,
-            color2: color2Input.value,
-            ollama_base_url: ollamaBaseUrlInput.value.trim(),
-            ollama_api_key: ollamaApiKeyInput.value.trim(),
-            usermodel: usermodelInput.value,
-            usertemperature: parseFloat(usertemperatureInput.value),
-            umatch_count: parseInt(umatchCountInput.value, 10),
-            umatch_threshold: parseFloat(umatchThresholdInput.value),
-            sysprompt: syspromptInput.value
-        };
-        localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
-        applyTheme();
-        settingsModal.classList.add('hidden');
-    });
-
-    sendBtn.addEventListener('click', sendMessage);
-    userInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
-
-    userInput.addEventListener('input', () => {
-        userInput.style.height = 'auto';
-        userInput.style.height = `${Math.min(userInput.scrollHeight, 120)}px`;
-    });
 
     // -------------------------------------------------------------
-    // 10. Initialization
+    // 9. Initialization
     // -------------------------------------------------------------
     loadSettings();
-    renderRAGs();
-    showHome();
+
+    if (currentRAG) {
+        loadChatHistory(currentRAG.id, currentRAG.name);
+    }
 });

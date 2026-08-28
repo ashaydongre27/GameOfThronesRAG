@@ -39,23 +39,29 @@ else:
 # 2. Helper functions for Ollama / Cloud AI API calls
 def normalize_url(base_url):
     """
-    Strips any trailing /api, /v1, or / from the user-provided URL
-    so we always have a clean root like 'https://ollama.com' or 'http://localhost:11434'.
-    All endpoint paths (/api/embed, /api/chat, /v1/embeddings) are appended by the callers.
+    Clean up user-provided URL: add scheme, remove trailing slashes.
+    Returns the URL as-is (preserving /api if present).
     """
     url = (base_url or "").strip()
-    # Remove all trailing slashes
     while url.endswith("/"):
         url = url[:-1]
-    # Add scheme if missing
     if not url.startswith("http://") and not url.startswith("https://"):
         url = "https://" + url
-    # Strip known API path suffixes so we never double them
-    for suffix in ["/api/v1", "/v1", "/api"]:
-        if url.endswith(suffix):
-            url = url[:-len(suffix)]
-            break
     return url
+
+
+def build_api_path(root_url, path):
+    """
+    Build the full API URL. If root_url already ends with /api,
+    append path directly. Otherwise prepend /api.
+    Example:
+      build_api_path("https://ollama.com/api", "/embed") -> "https://ollama.com/api/embed"
+      build_api_path("http://localhost:11434", "/embed")  -> "http://localhost:11434/api/embed"
+    """
+    if root_url.endswith("/api"):
+        return f"{root_url}{path}"
+    else:
+        return f"{root_url}/api{path}"
 
 
 def get_ollama_embedding(base_url, query, api_key=""):
@@ -66,27 +72,11 @@ def get_ollama_embedding(base_url, query, api_key=""):
     root_url = normalize_url(base_url)
     last_error = ""
 
-    # 1. Try Ollama /api/embeddings
+    # 1. Try Ollama /api/embed (newer Ollama & Ollama Cloud)
     try:
+        url = build_api_path(root_url, "/embed")
         res = requests.post(
-            f"{root_url}/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": query},
-            headers=headers,
-            timeout=25
-        )
-        if res.ok:
-            data = res.json()
-            if "embedding" in data:
-                return data["embedding"]
-        else:
-            last_error = f'path "/api/embeddings" {res.text[:200]} (status code: {res.status_code})'
-    except Exception as e:
-        last_error = str(e)
-
-    # 2. Try Ollama /api/embed (newer Ollama versions)
-    try:
-        res = requests.post(
-            f"{root_url}/api/embed",
+            url,
             json={"model": "nomic-embed-text", "input": query},
             headers=headers,
             timeout=25
@@ -96,15 +86,39 @@ def get_ollama_embedding(base_url, query, api_key=""):
             embeddings = data.get("embeddings", [])
             if embeddings:
                 return embeddings[0]
+            # Some versions return "embedding" directly
+            if "embedding" in data:
+                return data["embedding"]
         else:
-            last_error = f'path "/api/embed" {res.text[:200]} (status code: {res.status_code})'
+            last_error = f"{url} returned {res.status_code}: {res.text[:200]}"
     except Exception as e:
-        last_error = str(e)
+        last_error = f"{url} error: {str(e)}"
+
+    # 2. Try Ollama /api/embeddings (older Ollama versions)
+    try:
+        url = build_api_path(root_url, "/embeddings")
+        res = requests.post(
+            url,
+            json={"model": "nomic-embed-text", "prompt": query},
+            headers=headers,
+            timeout=25
+        )
+        if res.ok:
+            data = res.json()
+            if "embedding" in data:
+                return data["embedding"]
+        else:
+            last_error = f"{url} returned {res.status_code}: {res.text[:200]}"
+    except Exception as e:
+        last_error = f"{url} error: {str(e)}"
 
     # 3. Try OpenAI-compatible /v1/embeddings (Nomic AI, OpenRouter, cloud proxies)
     try:
+        # Strip /api if present to build /v1 path
+        v1_base = root_url[:-4] if root_url.endswith("/api") else root_url
+        url = f"{v1_base}/v1/embeddings"
         res = requests.post(
-            f"{root_url}/v1/embeddings",
+            url,
             json={"model": "nomic-embed-text", "input": query},
             headers=headers,
             timeout=25
@@ -115,13 +129,29 @@ def get_ollama_embedding(base_url, query, api_key=""):
             if data_arr and "embedding" in data_arr[0]:
                 return data_arr[0]["embedding"]
         else:
-            last_error = f'path "/v1/embeddings" {res.text[:200]} (status code: {res.status_code})'
+            last_error = f"{url} returned {res.status_code}: {res.text[:200]}"
     except Exception as e:
-        last_error = str(e)
+        last_error = f"{url} error: {str(e)}"
+
+    # 4. Try LangChain OllamaEmbeddings (for local machine execution)
+    try:
+        from langchain_ollama import OllamaEmbeddings
+        client_kwargs = {}
+        if api_key:
+            client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
+        embed_client = OllamaEmbeddings(
+            model="nomic-embed-text",
+            base_url=root_url,
+            client_kwargs=client_kwargs
+        )
+        return embed_client.embed_query(query)
+    except Exception as e:
+        last_error = f"{last_error} | LangChain: {str(e)}"
 
     raise Exception(
         f"Could not connect to Ollama embedding endpoint at '{root_url}'. Error: {last_error}"
     )
+
 
 
 def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temperature=0.5, api_key=""):
@@ -143,7 +173,7 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
             "stream": False,
             "options": {"temperature": float(temperature)}
         }
-        res = requests.post(f"{root_url}/api/chat", json=payload, headers=headers, timeout=50)
+        res = requests.post(build_api_path(root_url, "/chat"), json=payload, headers=headers, timeout=50)
         if res.ok:
             data = res.json()
             answer = data.get("message", {}).get("content", "")
@@ -172,7 +202,8 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
             ],
             "temperature": float(temperature)
         }
-        res = requests.post(f"{root_url}/v1/chat/completions", json=v1_payload, headers=headers, timeout=50)
+        v1_base = root_url[:-4] if root_url.endswith("/api") else root_url
+        res = requests.post(f"{v1_base}/v1/chat/completions", json=v1_payload, headers=headers, timeout=50)
         if res.ok:
             v1_data = res.json()
             answer = v1_data["choices"][0]["message"]["content"]
@@ -181,6 +212,27 @@ def generate_ollama_chat(base_url, model_name, sysprompt, context, query, temper
             last_error = f"{res.status_code} {res.text[:150]}"
     except Exception as e:
         last_error = str(e)
+
+    # 3. Try LangChain ChatOllama (for local machine execution)
+    try:
+        from langchain_ollama import ChatOllama
+        from langchain_core.messages import SystemMessage, HumanMessage
+        client_kwargs = {}
+        if api_key:
+            client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
+        llm = ChatOllama(
+            model=model_name,
+            base_url=root_url,
+            temperature=float(temperature),
+            client_kwargs=client_kwargs
+        )
+        response = llm.invoke([
+            SystemMessage(content=sysprompt),
+            HumanMessage(content=f"Context:\n{context}\n\nQuestion: {query}")
+        ])
+        return response.content, {"total_duration_sec": 0, "eval_count": 0, "tokens_per_sec": 0}
+    except Exception as e:
+        last_error = f"{last_error} | LangChain Chat: {str(e)}"
 
     raise Exception(f"Failed to generate answer from '{root_url}'. Details: {last_error}")
 
@@ -201,6 +253,21 @@ def login_page():
 @app.route("/signup.html")
 def signup_page():
     return send_from_directory(BASE_DIR, "signup.html")
+
+@app.route("/game-of-thrones")
+@app.route("/game-of-thrones.html")
+def got_page():
+    return send_from_directory(BASE_DIR, "game-of-thrones.html")
+
+@app.route("/spiderman")
+@app.route("/spiderman.html")
+def spiderman_page():
+    return send_from_directory(BASE_DIR, "spiderman.html")
+
+@app.route("/apollo-11")
+@app.route("/apollo-11.html")
+def apollo_page():
+    return send_from_directory(BASE_DIR, "apollo-11.html")
 
 @app.route("/style.css")
 def serve_css():
@@ -407,8 +474,8 @@ def ask_question():
     rag_id = data.get("rag_id", "game_of_thrones").strip()
     username = data.get("username", "").strip()
 
-    OLLAMA_BASE_URL = (data.get("ollama_base_url") or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").strip()
-    OLLAMA_API_KEY = (data.get("ollama_api_key") or os.getenv("OLLAMA_API_KEY") or "").strip()
+    OLLAMA_BASE_URL = (os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").strip()
+    OLLAMA_API_KEY = (os.getenv("OLLAMA_API_KEY") or "").strip()
 
     rpc_functions = {
         "spiderman": "match_mainragvdb",

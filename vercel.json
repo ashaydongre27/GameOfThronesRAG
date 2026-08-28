@@ -19,6 +19,18 @@
     {
       "source": "/ask",
       "destination": "/api/index.py"
+    },
+    {
+      "source": "/game-of-thrones",
+      "destination": "/game-of-thrones.html"
+    },
+    {
+      "source": "/spiderman",
+      "destination": "/spiderman.html"
+    },
+    {
+      "source": "/apollo-11",
+      "destination": "/apollo-11.html"
     }
   ]
 }
