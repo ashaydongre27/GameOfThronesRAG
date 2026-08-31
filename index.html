@@ -260,12 +260,11 @@
                 <div>
                     <label class="block text-xs uppercase tracking-wider text-on-surface-variant mb-1 font-semibold">Inference Model</label>
                     <select id="usermodel" class="w-full bg-surface-container border border-glass-border text-on-surface p-2.5 rounded-none text-sm focus:border-primary outline-none">
-                        <option value="gemma4:31b-cloud">gemma4:31b-cloud</option>
-                        <option value="gpt-oss:20b-cloud">gpt-oss:20b-cloud</option>
-                        <option value="nemotron-3-nano:30b-cloud">nemotron-3-nano:30b-cloud</option>
-                        <option value="llama3:latest">llama3:latest (Local)</option>
-                        <option value="mistral:latest">mistral:latest (Local)</option>
-                        <option value="gemma:2b">gemma:2b (Local)</option>
+                        <option value="gemini-3.6-flash" selected>gemini-3.6-flash (Google Gemini - Default)</option>
+                        <option value="gemini-3.5-flash">gemini-3.5-flash (Google Gemini)</option>
+                        <option value="gemma-4-31b-it">gemma-4-31b-it (Google Gemma)</option>
+                        <option value="gemma4:31b-cloud">gemma4:31b-cloud (Ollama)</option>
+                        <option value="llama3:latest">llama3:latest (Local Ollama)</option>
                     </select>
                 </div>
 
