@@ -1,17 +1,103 @@
 // ==========================================================================
-// Lima RAG Assistant - Midnight Glass Brutalist UI Controller
+// Lima Controller - Dark/Light Switcher & Realtime Appearance Profiles
 // ==========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
 
     // -------------------------------------------------------------
-    // 1. WebGL Canvas Shader Background
+    // 1. WebGL Canvas Shader Background with Dynamic Colors
     // -------------------------------------------------------------
+    let glProgramInfo = null;
+    let glContext = null;
+
+    const themeColors = {
+        midnight: {
+            c1: [0.04, 0.07, 0.15],
+            c2: [0.12, 0.16, 0.23],
+            c3: [0.06, 0.09, 0.20],
+            start: "#0f172a",
+            end: "#1e293b",
+            surface: "#0b1326",
+            surfaceContainer: "#171f33",
+            onSurface: "#dae2fd",
+            primary: "#adc6ff"
+        },
+        dark: {
+            c1: [0.0, 0.0, 0.0],
+            c2: [0.07, 0.07, 0.07],
+            c3: [0.03, 0.03, 0.03],
+            start: "#000000",
+            end: "#121212",
+            surface: "#000000",
+            surfaceContainer: "#141414",
+            onSurface: "#ffffff",
+            primary: "#60a5fa"
+        },
+        cosmic: {
+            c1: [0.10, 0.05, 0.22],
+            c2: [0.19, 0.11, 0.35],
+            c3: [0.06, 0.03, 0.15],
+            start: "#1e1b4b",
+            end: "#312e81",
+            surface: "#0f0c29",
+            surfaceContainer: "#1f1747",
+            onSurface: "#f3e8ff",
+            primary: "#c084fc"
+        },
+        ocean: {
+            c1: [0.02, 0.12, 0.20],
+            c2: [0.05, 0.22, 0.35],
+            c3: [0.01, 0.08, 0.14],
+            start: "#0c4a6e",
+            end: "#075985",
+            surface: "#032030",
+            surfaceContainer: "#08334c",
+            onSurface: "#e0f2fe",
+            primary: "#38bdf8"
+        },
+        sunset: {
+            c1: [0.20, 0.02, 0.08],
+            c2: [0.35, 0.05, 0.15],
+            c3: [0.12, 0.01, 0.05],
+            start: "#4c0519",
+            end: "#881337",
+            surface: "#260510",
+            surfaceContainer: "#3d0a1b",
+            onSurface: "#ffe4e6",
+            primary: "#fb7185"
+        },
+        forest: {
+            c1: [0.01, 0.15, 0.10],
+            c2: [0.03, 0.25, 0.18],
+            c3: [0.01, 0.09, 0.06],
+            start: "#064e3b",
+            end: "#065f46",
+            surface: "#022c22",
+            surfaceContainer: "#064e3b",
+            onSurface: "#d1fae5",
+            primary: "#34d399"
+        },
+        light: {
+            c1: [0.92, 0.94, 0.97],
+            c2: [0.85, 0.89, 0.94],
+            c3: [0.96, 0.97, 0.99],
+            start: "#f8fafc",
+            end: "#e2e8f0",
+            surface: "#f8fafc",
+            surfaceContainer: "#ffffff",
+            onSurface: "#0f172a",
+            primary: "#2563eb"
+        }
+    };
+
+    let activeColors = themeColors.midnight;
+
     function initWebGLShader() {
         const canvas = document.getElementById('glcanvas');
         if (!canvas) return;
         const gl = canvas.getContext('webgl');
         if (!gl) return;
+        glContext = gl;
 
         const vsSource = `
             attribute vec4 aVertexPosition;
@@ -27,18 +113,17 @@ document.addEventListener('DOMContentLoaded', () => {
             varying vec2 v_texCoord;
             uniform float u_time;
             uniform vec2 u_resolution;
+            uniform vec3 u_color1;
+            uniform vec3 u_color2;
+            uniform vec3 u_color3;
 
             void main() {
                 vec2 uv = v_texCoord;
-                vec3 color1 = vec3(0.04, 0.07, 0.15); // Deep Indigo
-                vec3 color2 = vec3(0.12, 0.16, 0.23); // Slate
-                vec3 color3 = vec3(0.06, 0.09, 0.20); // Mid-depth
-
                 float noise1 = sin(uv.x * 3.0 + u_time * 0.2) * cos(uv.y * 2.0 + u_time * 0.3);
                 float noise2 = cos(uv.y * 4.0 - u_time * 0.1) * sin(uv.x * 2.5 + u_time * 0.2);
 
-                vec3 color = mix(color1, color2, noise1 * 0.5 + 0.5);
-                color = mix(color, color3, noise2 * 0.5 + 0.5);
+                vec3 color = mix(u_color1, u_color2, noise1 * 0.5 + 0.5);
+                color = mix(color, u_color3, noise2 * 0.5 + 0.5);
 
                 float dist = length(uv - 0.5);
                 color *= 1.0 - dist * 0.45;
@@ -68,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gl.linkProgram(shaderProgram);
         if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) return;
 
-        const programInfo = {
+        glProgramInfo = {
             program: shaderProgram,
             attribLocations: {
                 vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
@@ -76,6 +161,9 @@ document.addEventListener('DOMContentLoaded', () => {
             uniformLocations: {
                 time: gl.getUniformLocation(shaderProgram, 'u_time'),
                 resolution: gl.getUniformLocation(shaderProgram, 'u_resolution'),
+                color1: gl.getUniformLocation(shaderProgram, 'u_color1'),
+                color2: gl.getUniformLocation(shaderProgram, 'u_color2'),
+                color3: gl.getUniformLocation(shaderProgram, 'u_color3'),
             },
         };
 
@@ -101,13 +189,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 gl.viewport(0, 0, canvas.width, canvas.height);
             }
 
-            gl.useProgram(programInfo.program);
+            gl.useProgram(glProgramInfo.program);
             gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-            gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
-            gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+            gl.vertexAttribPointer(glProgramInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(glProgramInfo.attribLocations.vertexPosition);
 
-            gl.uniform1f(programInfo.uniformLocations.time, now);
-            gl.uniform2f(programInfo.uniformLocations.resolution, canvas.width, canvas.height);
+            gl.uniform1f(glProgramInfo.uniformLocations.time, now);
+            gl.uniform2f(glProgramInfo.uniformLocations.resolution, canvas.width, canvas.height);
+
+            gl.uniform3fv(glProgramInfo.uniformLocations.color1, activeColors.c1);
+            gl.uniform3fv(glProgramInfo.uniformLocations.color2, activeColors.c2);
+            gl.uniform3fv(glProgramInfo.uniformLocations.color3, activeColors.c3);
 
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             requestAnimationFrame(render);
@@ -227,7 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // -------------------------------------------------------------
-    // 4. Available Knowledge Bases (RAG Contexts)
+    // 4. Available Knowledge Bases
     // -------------------------------------------------------------
     const availableRAGs = [
         {
@@ -256,7 +348,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     ];
 
-    // Identify current page context
     const pageRagId = document.body.getAttribute('data-page-rag');
     const urlParams = new URLSearchParams(window.location.search);
     const activeRagId = pageRagId || urlParams.get('rag');
@@ -264,25 +355,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // -------------------------------------------------------------
-    // 5. System Settings Management
+    // 5. System Settings, Dark/Light Mode & Appearance Profiles
     // -------------------------------------------------------------
-    const themeProfiles = {
-        midnight: { start: "#0f172a", end: "#1e293b", primary: "#adc6ff" },
-        dark: { start: "#000000", end: "#121212", primary: "#60a5fa" },
-        cosmic: { start: "#1e1b4b", end: "#312e81", primary: "#c084fc" },
-        ocean: { start: "#0c4a6e", end: "#1e293b", primary: "#38bdf8" },
-        sunset: { start: "#4c0519", end: "#1e293b", primary: "#fb7185" },
-        forest: { start: "#064e3b", end: "#0f172a", primary: "#4edea3" },
-        light: { start: "#e2e8f0", end: "#cbd5e1", primary: "#2563eb" }
-    };
-
     let currentSettings = {
         themeProfile: "midnight",
-        usermodel: "gemma4:31b-cloud",
+        colorMode: "dark",
+        usermodel: "gpt-oss:20b-cloud",
         usertemperature: 0.5,
-        umatch_count: 10,
-        umatch_threshold: 0.4,
-        sysprompt: "You are a helpful assistant. Use the following context to answer the user's question. If you don't know the answer based on the context, just say that you don't know."
+        umatch_count: 8,
+        umatch_threshold: 0.35,
+        sysprompt: "You are a helpful assistant. Use the provided context to answer the user's question accurately."
     };
 
     const settingsModal = document.getElementById('settingsModal');
@@ -300,6 +382,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const threshValSpan = document.getElementById('threshVal');
     const syspromptInput = document.getElementById('sysprompt');
 
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const mobileThemeToggle = document.getElementById('mobileThemeToggle');
+    const themeToggleIcon = document.getElementById('themeToggleIcon');
+    const themeToggleText = document.getElementById('themeToggleText');
+
     function loadSettings() {
         const saved = localStorage.getItem('ragSettings');
         if (saved) {
@@ -310,12 +397,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         applySettingsToUI();
-        applyTheme();
+        applyAppearance();
     }
 
     function applySettingsToUI() {
         if (themeProfileSelect) themeProfileSelect.value = currentSettings.themeProfile || "midnight";
-        if (usermodelInput) usermodelInput.value = currentSettings.usermodel || "gemma4:31b-cloud";
+        if (usermodelInput) usermodelInput.value = currentSettings.usermodel || "gpt-oss:20b-cloud";
         if (usertemperatureInput) usertemperatureInput.value = currentSettings.usertemperature;
         if (tempValSpan) tempValSpan.textContent = currentSettings.usertemperature;
         if (umatchCountInput) umatchCountInput.value = currentSettings.umatch_count;
@@ -324,21 +411,73 @@ document.addEventListener('DOMContentLoaded', () => {
         if (syspromptInput) syspromptInput.value = currentSettings.sysprompt;
     }
 
-    function applyTheme() {
-        const profile = themeProfiles[currentSettings.themeProfile] || themeProfiles.midnight;
-        document.documentElement.style.setProperty('--gradient-start', profile.start);
-        document.documentElement.style.setProperty('--gradient-end', profile.end);
-        document.documentElement.style.setProperty('--primary', profile.primary);
+    function applyAppearance() {
+        const isLight = currentSettings.colorMode === "light" || currentSettings.themeProfile === "light";
+        const root = document.documentElement;
+        const body = document.body;
+
+        // 1. Toggle light/dark class on html
+        if (isLight) {
+            root.classList.remove('dark');
+            root.classList.add('light');
+        } else {
+            root.classList.remove('light');
+            root.classList.add('dark');
+        }
+
+        // 2. Apply theme profile class on body
+        const profile = currentSettings.themeProfile || "midnight";
+        body.className = body.className.replace(/theme-\w+/g, '').trim();
+        body.classList.add(`theme-${profile}`);
+
+        // 3. Update CSS Variables in real-time
+        const colors = themeColors[profile] || themeColors.midnight;
+        activeColors = colors;
+
+        root.style.setProperty('--gradient-start', colors.start);
+        root.style.setProperty('--gradient-end', colors.end);
+        root.style.setProperty('--surface', colors.surface);
+        root.style.setProperty('--surface-container', colors.surfaceContainer);
+        root.style.setProperty('--on-surface', colors.onSurface);
+        root.style.setProperty('--primary', colors.primary);
+
+        // 4. Update Theme Switcher Icon & Text
+        const isCurrentlyLight = root.classList.contains('light');
+        if (themeToggleIcon) themeToggleIcon.textContent = isCurrentlyLight ? 'light_mode' : 'dark_mode';
+        if (themeToggleText) themeToggleText.textContent = isCurrentlyLight ? 'Light Mode' : 'Dark Mode';
     }
 
-    function toggleThemeQuick() {
-        const profileKeys = Object.keys(themeProfiles);
-        const currentIndex = profileKeys.indexOf(currentSettings.themeProfile);
-        const nextProfile = profileKeys[(currentIndex + 1) % profileKeys.length];
-        currentSettings.themeProfile = nextProfile;
-        if (themeProfileSelect) themeProfileSelect.value = nextProfile;
+    // Direct Dark / Light Mode Switcher
+    function toggleDarkLightMode() {
+        const isLight = document.documentElement.classList.contains('light');
+        if (isLight) {
+            currentSettings.colorMode = "dark";
+            if (currentSettings.themeProfile === "light") {
+                currentSettings.themeProfile = "midnight";
+            }
+        } else {
+            currentSettings.colorMode = "light";
+            currentSettings.themeProfile = "light";
+        }
+        if (themeProfileSelect) themeProfileSelect.value = currentSettings.themeProfile;
         localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
-        applyTheme();
+        applyAppearance();
+    }
+
+    if (themeToggleBtn) themeToggleBtn.addEventListener('click', toggleDarkLightMode);
+    if (mobileThemeToggle) mobileThemeToggle.addEventListener('click', toggleDarkLightMode);
+
+    // Live preview when changing Appearance Profile in settings modal
+    if (themeProfileSelect) {
+        themeProfileSelect.addEventListener('change', (e) => {
+            currentSettings.themeProfile = e.target.value;
+            if (e.target.value === "light") {
+                currentSettings.colorMode = "light";
+            } else {
+                currentSettings.colorMode = "dark";
+            }
+            applyAppearance();
+        });
     }
 
     // Modal Events
@@ -367,6 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveSettingsBtn.addEventListener('click', () => {
             currentSettings = {
                 themeProfile: themeProfileSelect.value,
+                colorMode: themeProfileSelect.value === "light" ? "light" : "dark",
                 usermodel: usermodelInput.value,
                 usertemperature: parseFloat(usertemperatureInput.value),
                 umatch_count: parseInt(umatchCountInput.value, 10),
@@ -374,15 +514,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 sysprompt: syspromptInput.value
             };
             localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
-            applyTheme();
+            applyAppearance();
             closeSettings();
         });
     }
-
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    const mobileThemeToggle = document.getElementById('mobileThemeToggle');
-    if (themeToggleBtn) themeToggleBtn.addEventListener('click', toggleThemeQuick);
-    if (mobileThemeToggle) mobileThemeToggle.addEventListener('click', toggleThemeQuick);
 
     // Mobile Sidebar Drawer Handlers
     const appSidebar = document.getElementById('appSidebar');
@@ -408,7 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (mobileSidebarBtn) mobileSidebarBtn.addEventListener('click', openMobileSidebar);
     if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeMobileSidebar);
 
-    // Logout Events
+    // Logout Handler
     const handleLogout = () => {
         sessionStorage.clear();
         localStorage.removeItem('currentUser');
@@ -422,7 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // -------------------------------------------------------------
-    // 6. Chat History Management (Local & Supabase Sync)
+    // 6. Chat History Management
     // -------------------------------------------------------------
     const chatArea = document.getElementById('chatArea');
     const userInput = document.getElementById('userInput');
@@ -456,12 +591,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!chatArea) return;
         const msgContainer = chatArea.querySelector('.max-w-\\[900px\\]') || chatArea;
 
-        // Keep the welcome header, clear previous messages
         const welcomeHeader = msgContainer.querySelector('.chat-bubble-enter');
         msgContainer.innerHTML = '';
         if (welcomeHeader) msgContainer.appendChild(welcomeHeader);
 
-        // 1. Instant load from local storage
         const localHistory = getLocalHistory(ragId);
         if (localHistory && localHistory.length > 0) {
             localHistory.forEach(msg => {
@@ -469,7 +602,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // 2. Query cloud database in background for multi-device sync
         if (currentUser && currentUser.username) {
             try {
                 const res = await fetch(`/history?username=${encodeURIComponent(currentUser.username)}&rag_id=${encodeURIComponent(ragId)}`);
@@ -562,7 +694,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // -------------------------------------------------------------
-    // 7. Message Rendering (Brutalist Glass Style)
+    // 7. Message Rendering
     // -------------------------------------------------------------
     function appendMessage(text, sender, stats = null, chunks = null, autoScroll = true) {
         if (!chatArea) return;
@@ -589,12 +721,13 @@ document.addEventListener('DOMContentLoaded', () => {
             let detailsHtml = '';
             if (hasStats || hasChunks) {
                 let statsHtml = '';
-                if (hasStats && stats.total_duration_sec !== undefined) {
+                if (hasStats) {
                     statsHtml = `
-                        <div class="grid grid-cols-3 gap-2 pb-2 mb-2 border-b border-glass-border/30 font-mono text-[11px] text-on-surface-variant">
-                            <div>Latency: <strong class="text-primary">${stats.total_duration_sec}s</strong></div>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-2 mb-2 border-b border-glass-border/30 font-mono text-[11px] text-on-surface-variant">
+                            <div>Latency: <strong class="text-primary">${stats.total_duration_sec || 0}s</strong></div>
                             <div>Tokens: <strong class="text-primary">${stats.eval_count || 0}</strong></div>
                             <div>Speed: <strong class="text-primary">${stats.tokens_per_sec || 0} t/s</strong></div>
+                            <div class="truncate">Model: <strong class="text-primary">${stats.provider || 'AI'}</strong></div>
                         </div>
                     `;
                 }
@@ -607,7 +740,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${chunks.map((c, i) => `
                                 <div class="p-2 bg-surface-container/60 border border-glass-border/40 text-xs font-mono">
                                     <div class="flex justify-between text-primary font-bold mb-1">
-                                        <span>Chunk ${i + 1} (ID: ${c.id})</span>
+                                        <span>Chunk ${i + 1} (${c.id})</span>
                                         <span>Sim: ${c.similarity}</span>
                                     </div>
                                     <div class="text-on-surface-variant font-sans text-xs line-clamp-3 leading-relaxed">${c.text}</div>
@@ -619,7 +752,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 detailsHtml = `
                     <details class="mt-3 border-t border-glass-border/40 pt-2">
-                        <summary class="flex items-center justify-between text-on-surface-variant hover:text-primary text-[11px] font-semibold uppercase tracking-wider select-none outline-none py-1">
+                        <summary class="flex items-center justify-between text-on-surface-variant hover:text-primary text-[11px] font-semibold uppercase tracking-wider select-none outline-none py-1 cursor-pointer">
                             <span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">insights</span> Response Metrics & Chunks</span>
                             <span class="material-symbols-outlined text-[16px] summary-icon">expand_more</span>
                         </summary>
@@ -636,7 +769,7 @@ document.addEventListener('DOMContentLoaded', () => {
             msgDiv.innerHTML = `
                 <div class="flex items-center gap-1.5 text-on-surface-variant mb-0.5">
                     <span class="material-symbols-outlined text-[15px] text-primary">smart_toy</span>
-                    <span class="text-[11px] font-semibold uppercase tracking-wider">Lima RAG</span>
+                    <span class="text-[11px] font-semibold uppercase tracking-wider text-primary">Lima</span>
                 </div>
                 <div class="bg-glass-panel border border-glass-border backdrop-blur-xl p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words">
                     ${text}
@@ -654,7 +787,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // -------------------------------------------------------------
-    // 8. Sending Questions & API Interaction (/ask)
+    // 8. Sending Questions (/ask)
     // -------------------------------------------------------------
     async function sendMessage(e) {
         if (e) e.preventDefault();
@@ -690,7 +823,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!response.ok || data.error) {
                 const errorMsg = data.error || `Server error (${response.status})`;
-                appendMessage(`⚠️ <strong>System Notice:</strong> ${errorMsg}`, 'bot');
+                appendMessage(`⚠️ <strong>Notice:</strong> ${errorMsg}`, 'bot');
             } else {
                 appendMessage(data.answer, 'bot', data.stats, data.chunks);
                 persistMessageTurn(query, data.answer, data.stats, data.chunks);
@@ -709,7 +842,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (userInput) {
-        // Auto-expand textarea
         userInput.addEventListener('input', function () {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 180) + 'px';
@@ -718,7 +850,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Enter key to send (Shift+Enter for newline)
         userInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();

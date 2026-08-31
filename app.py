@@ -193,7 +193,48 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
     start_time = time.time()
     user_prompt = f"Context:\n{context}\n\nQuestion: {query}" if (context and context.strip()) else query
 
-    # 1. Try Google Gemini (Fast & High Quality)
+    # 1. If model is Ollama-specific (e.g. gpt-oss, llama3, gemma4:31b), try Ollama / LangChain first
+    is_gemini_model = model_name.startswith("gemini") or model_name.startswith("gemma-4")
+    
+    if not is_gemini_model:
+        root_url = OLLAMA_BASE_URL
+        if root_url.endswith("/"):
+            root_url = root_url[:-1]
+
+        try:
+            headers = {"Content-Type": "application/json"}
+            if OLLAMA_API_KEY:
+                headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+
+            clean_model = model_name.replace("-cloud", "")
+            payload = {
+                "model": clean_model,
+                "messages": [
+                    {"role": "system", "content": sysprompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "stream": False,
+                "options": {"temperature": float(temperature)}
+            }
+            res = requests.post(f"{root_url}/api/chat", json=payload, headers=headers, timeout=45)
+            if res.ok:
+                data = res.json()
+                answer = data.get("message", {}).get("content", "")
+                total_duration = round(data.get("total_duration", 0) / 1e9, 2)
+                eval_count = data.get("eval_count", 0)
+                eval_duration = data.get("eval_duration", 1e9) / 1e9
+                tokens_per_sec = round(eval_count / eval_duration, 2) if eval_duration > 0 else 0
+                stats = {
+                    "total_duration_sec": total_duration,
+                    "eval_count": eval_count,
+                    "tokens_per_sec": tokens_per_sec,
+                    "provider": f"Ollama ({clean_model})"
+                }
+                return answer, stats
+        except Exception as ollama_err:
+            print(f"Ollama chat attempt notice: {ollama_err}")
+
+    # 2. Try Google Gemini API (Fast, Reliable & High Quality)
     if GOOGLE_API_KEY:
         gemini_model = "gemini-3.6-flash"
         if "3.5" in model_name:
@@ -230,43 +271,6 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
         except Exception as gemini_err:
             print(f"Gemini generation exception: {gemini_err}")
 
-    # 2. Try LangChain / Ollama
-    root_url = OLLAMA_BASE_URL
-    if root_url.endswith("/"):
-        root_url = root_url[:-1]
-
-    try:
-        headers = {"Content-Type": "application/json"}
-        if OLLAMA_API_KEY:
-            headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
-
-        payload = {
-            "model": model_name or "gemma4:31b-cloud",
-            "messages": [
-                {"role": "system", "content": sysprompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "stream": False,
-            "options": {"temperature": float(temperature)}
-        }
-        res = requests.post(f"{root_url}/api/chat", json=payload, headers=headers, timeout=50)
-        if res.ok:
-            data = res.json()
-            answer = data.get("message", {}).get("content", "")
-            total_duration = round(data.get("total_duration", 0) / 1e9, 2)
-            eval_count = data.get("eval_count", 0)
-            eval_duration = data.get("eval_duration", 1e9) / 1e9
-            tokens_per_sec = round(eval_count / eval_duration, 2) if eval_duration > 0 else 0
-            stats = {
-                "total_duration_sec": total_duration,
-                "eval_count": eval_count,
-                "tokens_per_sec": tokens_per_sec,
-                "provider": "Ollama"
-            }
-            return answer, stats
-    except Exception as ollama_err:
-        print(f"Ollama chat notice: {ollama_err}")
-
     # 3. LangChain ChatOllama Fallback
     try:
         from langchain_ollama import ChatOllama
@@ -274,7 +278,7 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
         client_kwargs = {}
         if OLLAMA_API_KEY:
             client_kwargs["headers"] = {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
-        llm = ChatOllama(model=model_name or "llama3", base_url=root_url, temperature=float(temperature), client_kwargs=client_kwargs)
+        llm = ChatOllama(model=model_name or "llama3", base_url=OLLAMA_BASE_URL, temperature=float(temperature), client_kwargs=client_kwargs)
         resp = llm.invoke([SystemMessage(content=sysprompt), HumanMessage(content=user_prompt)])
         total_duration = round(time.time() - start_time, 2)
         return resp.content, {"total_duration_sec": total_duration, "eval_count": len(resp.content.split()), "tokens_per_sec": 0, "provider": "LangChain"}
