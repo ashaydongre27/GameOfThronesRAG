@@ -13,31 +13,24 @@
             theme: {
                 extend: {
                     colors: {
-                        "surface": "#0b1326",
-                        "surface-dim": "#0b1326",
-                        "surface-bright": "#31394d",
-                        "surface-container-lowest": "#060e20",
-                        "surface-container-low": "#131b2e",
-                        "surface-container": "#171f33",
-                        "surface-container-high": "#222a3d",
-                        "surface-container-highest": "#2d3449",
-                        "surface-variant": "#2d3449",
-                        "on-surface": "#dae2fd",
-                        "on-surface-variant": "#c2c6d6",
-                        "primary": "#adc6ff",
-                        "on-primary": "#002e6a",
-                        "primary-container": "#4d8eff",
-                        "secondary": "#a4c9ff",
-                        "tertiary": "#4edea3",
+                        "surface": "var(--surface)",
+                        "surface-container": "var(--surface-container)",
+                        "surface-variant": "var(--surface-variant)",
+                        "on-surface": "var(--on-surface)",
+                        "on-surface-variant": "var(--on-surface-variant)",
+                        "primary": "var(--primary)",
+                        "on-primary": "var(--on-primary)",
+                        "secondary": "var(--secondary)",
+                        "tertiary": "var(--tertiary)",
                         "danger-rose": "#f43f5e",
                         "success-emerald": "#10b981",
-                        "background": "#0b1326",
-                        "on-background": "#dae2fd",
-                        "gradient-start": "#0f172a",
-                        "gradient-end": "#1e293b",
-                        "glass-bg": "rgba(255, 255, 255, 0.04)",
-                        "glass-border": "rgba(255, 255, 255, 0.15)",
-                        "sidebar-bg": "rgba(0, 0, 0, 0.6)"
+                        "background": "var(--surface)",
+                        "on-background": "var(--on-surface)",
+                        "gradient-start": "var(--gradient-start)",
+                        "gradient-end": "var(--gradient-end)",
+                        "glass-bg": "var(--glass-bg)",
+                        "glass-border": "var(--glass-border)",
+                        "sidebar-bg": "var(--sidebar-bg)"
                     },
                     fontFamily: {
                         "display": ["Space Grotesk", "sans-serif"],
@@ -53,6 +46,7 @@
             }
         }
     </script>
+    <link rel="icon" type="image/png" href="LIMA_Logo.png" />
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
@@ -65,8 +59,8 @@
     <div class="w-full max-w-md glass-panel p-8 md:p-10 z-10 relative stagger-enter border border-glass-border shadow-2xl">
         <!-- Logo & Header -->
         <div class="text-center mb-8">
-            <div class="inline-flex items-center justify-center w-14 h-14 bg-primary/10 border border-primary/40 text-primary mb-4">
-                <span class="material-symbols-outlined text-3xl">dataset</span>
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-primary/10 border border-primary/40 p-2 mb-4 overflow-hidden">
+                <img src="LIMA_Logo.png" alt="Lima Logo" class="w-full h-full object-contain" />
             </div>
             <h1 class="font-h1 text-3xl uppercase tracking-tight text-primary">Lima</h1>
             <p class="text-xs uppercase tracking-widest text-on-surface-variant mt-1">Authenticate to access system</p>

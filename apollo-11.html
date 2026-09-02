@@ -13,34 +13,29 @@
             theme: {
                 extend: {
                     colors: {
-                        "surface": "#0b1326",
-                        "surface-dim": "#0b1326",
-                        "surface-bright": "#31394d",
-                        "surface-container-lowest": "#060e20",
-                        "surface-container-low": "#131b2e",
-                        "surface-container": "#171f33",
-                        "surface-container-high": "#222a3d",
-                        "surface-container-highest": "#2d3449",
-                        "surface-variant": "#2d3449",
-                        "on-surface": "#dae2fd",
-                        "on-surface-variant": "#c2c6d6",
-                        "primary": "#adc6ff",
-                        "on-primary": "#002e6a",
-                        "primary-container": "#4d8eff",
-                        "on-primary-container": "#00285d",
-                        "secondary": "#a4c9ff",
-                        "on-secondary": "#00315d",
-                        "tertiary": "#4edea3",
-                        "on-tertiary": "#003824",
+                        "surface": "var(--surface)",
+                        "surface-container-low": "var(--surface)",
+                        "surface-container": "var(--surface-container)",
+                        "surface-container-high": "var(--surface-container)",
+                        "surface-container-highest": "var(--surface-variant)",
+                        "surface-variant": "var(--surface-variant)",
+                        "on-surface": "var(--on-surface)",
+                        "on-surface-variant": "var(--on-surface-variant)",
+                        "primary": "var(--primary)",
+                        "on-primary": "var(--on-primary)",
+                        "primary-container": "var(--primary)",
+                        "on-primary-container": "var(--on-primary)",
+                        "secondary": "var(--secondary)",
+                        "tertiary": "var(--tertiary)",
                         "danger-rose": "#f43f5e",
                         "success-emerald": "#10b981",
-                        "background": "#0b1326",
-                        "on-background": "#dae2fd",
-                        "gradient-start": "#0f172a",
-                        "gradient-end": "#1e293b",
-                        "glass-bg": "rgba(255, 255, 255, 0.04)",
-                        "glass-border": "rgba(255, 255, 255, 0.15)",
-                        "sidebar-bg": "rgba(0, 0, 0, 0.6)"
+                        "background": "var(--surface)",
+                        "on-background": "var(--on-surface)",
+                        "gradient-start": "var(--gradient-start)",
+                        "gradient-end": "var(--gradient-end)",
+                        "glass-bg": "var(--glass-bg)",
+                        "glass-border": "var(--glass-border)",
+                        "sidebar-bg": "var(--sidebar-bg)"
                     },
                     fontFamily: {
                         "display": ["Space Grotesk", "sans-serif"],
@@ -56,6 +51,7 @@
             }
         }
     </script>
+    <link rel="icon" type="image/png" href="LIMA_Logo.png" />
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
@@ -73,8 +69,8 @@
         <!-- Sidebar Brand & User -->
         <div class="p-6 border-b border-glass-border/40">
             <div class="flex items-center gap-3 mb-4">
-                <div class="w-10 h-10 bg-primary/10 border border-primary/40 flex items-center justify-center text-primary font-bold">
-                    <span class="material-symbols-outlined">dataset</span>
+                <div class="w-10 h-10 bg-primary/10 border border-primary/40 flex items-center justify-center p-1 overflow-hidden">
+                    <img src="LIMA_Logo.png" alt="Lima Logo" class="w-full h-full object-contain" />
                 </div>
                 <div>
                     <h1 class="font-h1 text-2xl text-primary uppercase tracking-tight">Lima</h1>
@@ -189,9 +185,8 @@
                             <span class="material-symbols-outlined text-[20px]">send</span>
                         </button>
                     </div>
-                    <div class="flex justify-between items-center mt-1.5 px-1">
-                        <span class="font-mono text-[11px] text-on-surface-variant/60">Vector Context: Apollo11 | 768-Dim</span>
-                        <span class="font-mono text-[11px] text-on-surface-variant/60">Press Enter to send</span>
+                    <div class="flex justify-end items-center mt-1.5 px-1">
+                        <span class="font-mono text-[11px] text-on-surface-variant">Press Enter to send</span>
                     </div>
                 </form>
             </div>
@@ -227,12 +222,10 @@
                 <div>
                     <label class="block text-xs uppercase tracking-wider text-on-surface-variant mb-1 font-semibold">Inference Model</label>
                     <select id="usermodel" class="w-full bg-surface-container border border-glass-border text-on-surface p-2.5 rounded-none text-sm focus:border-primary outline-none">
-                        <option value="gpt-oss:20b-cloud" selected>gpt-oss:20b-cloud (Default)</option>
-                        <option value="gemini-3.6-flash">gemini-3.6-flash (Google Gemini)</option>
-                        <option value="gemini-3.5-flash">gemini-3.5-flash (Google Gemini)</option>
-                        <option value="gemma-4-31b-it">gemma-4-31b-it (Google Gemma)</option>
-                        <option value="gemma4:31b-cloud">gemma4:31b-cloud (Ollama)</option>
-                        <option value="llama3:latest">llama3:latest (Local Ollama)</option>
+                        <option value="gpt-oss:20b-cloud" selected>gpt-oss:20b (Default)</option>
+                        <option value="gemma4:31b-cloud">gemma4:31b</option>
+                        <option value="nemotron-3-nano:30b-cloud">nemotron-3-nano:30b</option>
+                        <option value="llama3:latest">llama3:latest (Local Machine)</option>
                     </select>
                 </div>
 

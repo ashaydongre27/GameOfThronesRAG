@@ -45,60 +45,78 @@ RPC_MAPPINGS = {
 }
 
 
-# --------------------------------------------------------------------------
-# 1. Helper Functions: Embeddings & Vector Search
-# --------------------------------------------------------------------------
-def get_embedding(text: str, base_url: str = "", api_key: str = "") -> list:
-    """
-    Generates a 768-dimensional embedding vector.
-    Uses Google Gemini API if GOOGLE_API_KEY is available, with LangChain/Ollama fallback.
-    """
-    g_key = GOOGLE_API_KEY or api_key
-    if g_key and not g_key.startswith("http"):
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={g_key}"
-            payload = {
-                "model": "models/gemini-embedding-001",
-                "content": {"parts": [{"text": text[:2048]}]},
-                "outputDimensionality": 768
-            }
-            res = requests.post(url, json=payload, timeout=20)
-            if res.ok:
-                return res.json().get("embedding", {}).get("values", [])
-            else:
-                print(f"Google embedding notice ({res.status_code}): {res.text[:150]}")
-        except Exception as e:
-            print(f"Google embedding exception: {e}")
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-    # Fallback to Ollama embedding
-    root_url = base_url or OLLAMA_BASE_URL
-    if root_url.endswith("/"):
-        root_url = root_url[:-1]
-    headers = {"Content-Type": "application/json"}
-    if OLLAMA_API_KEY:
-        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+# Primary and Backup Google API Keys
+PRIMARY_GOOGLE_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+BACKUP_GOOGLE_KEY = os.getenv("GOOGLE_API_KEY_BACKUP") or os.getenv("GOOGLE_API_BACKUP") or os.getenv("GOOGLE_API_KEY_2") or ""
 
+_primary_embedder = None
+_backup_embedder = None
+_using_backup = False
+
+if PRIMARY_GOOGLE_KEY:
     try:
-        url = f"{root_url}/api/embeddings"
-        res = requests.post(url, json={"model": "nomic-embed-text", "prompt": text}, headers=headers, timeout=20)
-        if res.ok:
-            return res.json().get("embedding", [])
-    except Exception:
-        pass
-
-    # LangChain OllamaEmbeddings Fallback
-    try:
-        from langchain_ollama import OllamaEmbeddings
-        emb_client = OllamaEmbeddings(model="nomic-embed-text", base_url=root_url)
-        return emb_client.embed_query(text)
+        _primary_embedder = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=PRIMARY_GOOGLE_KEY,
+            output_dimensionality=3072
+        )
     except Exception as e:
-        print(f"LangChain embedding fallback notice: {e}")
+        print(f"Primary embedder initialization notice: {e}")
 
-    raise Exception("Could not generate text embedding. Please check GOOGLE_API_KEY or OLLAMA_BASE_URL.")
+if BACKUP_GOOGLE_KEY and BACKUP_GOOGLE_KEY != PRIMARY_GOOGLE_KEY:
+    try:
+        _backup_embedder = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=BACKUP_GOOGLE_KEY,
+            output_dimensionality=3072
+        )
+    except Exception as e:
+        print(f"Backup embedder initialization notice: {e}")
+
+
+# Helper Functions: Embeddings & Vector Search
+def get_embedding(text: str, base_url: str = "", api_key: str = "") -> list:
+    global _primary_embedder, _backup_embedder, _using_backup
+
+    # Custom override key if explicitly passed
+    if api_key:
+        embedder = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=api_key,
+            output_dimensionality=3072
+        )
+        return embedder.embed_query(text.strip()[:2048])
+
+    if not _primary_embedder and PRIMARY_GOOGLE_KEY:
+        _primary_embedder = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=PRIMARY_GOOGLE_KEY,
+            output_dimensionality=3072
+        )
+
+    if not _primary_embedder:
+        raise ValueError("Missing GOOGLE_API_KEY in environment or .env file.")
+
+    cleaned = text.strip()[:2048]
+
+    # Try active embedder (primary or backup)
+    active_embedder = _backup_embedder if (_using_backup and _backup_embedder) else _primary_embedder
+
+    try:
+        return active_embedder.embed_query(cleaned)
+    except Exception as e:
+        err_str = str(e)
+        if ("RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "Quota" in err_str) and _backup_embedder and not _using_backup:
+            _using_backup = True
+            print(" [Failover] Primary Google API key reached quota limit (429). Switched to backup API key.")
+            return _backup_embedder.embed_query(cleaned)
+        raise e
 
 
 def cosine_similarity(vec_a: list, vec_b: list) -> float:
-    """Computes cosine similarity between two numeric vectors."""
+    # Computes cosine similarity between two numeric vectors
     if not vec_a or not vec_b or len(vec_a) != len(vec_b):
         return 0.0
     dot = sum(a * b for a, b in zip(vec_a, vec_b))
@@ -108,10 +126,7 @@ def cosine_similarity(vec_a: list, vec_b: list) -> float:
 
 
 def retrieve_vector_context(rag_id: str, query_embedding: list, match_threshold: float = 0.35, match_count: int = 8):
-    """
-    Performs vector similarity search across GameofThronesVDB, SpiderManVDB, or Apollo11VDB.
-    Tries PostgreSQL RPC match function first, with robust in-database cosine math fallback.
-    """
+    # Performs vector similarity search across GameofThronesVDB, SpiderManVDB, or Apollo11VDB
     if not supabase:
         return "", [], []
 
@@ -183,13 +198,9 @@ def retrieve_vector_context(rag_id: str, query_embedding: list, match_threshold:
     return retrieved_context, sources, chunks
 
 
-# --------------------------------------------------------------------------
-# 2. Helper Functions: LLM Answer Generation (Google Gemini & Ollama)
-# --------------------------------------------------------------------------
+# Helper Functions: LLM Answer Generation
 def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: str, temperature: float = 0.5):
-    """
-    Generates chat answer using Google Gemini API or LangChain/Ollama.
-    """
+    # Generates chat answer using Ollama or Google Gemini
     start_time = time.time()
     user_prompt = f"Context:\n{context}\n\nQuestion: {query}" if (context and context.strip()) else query
 
@@ -228,7 +239,8 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
                     "total_duration_sec": total_duration,
                     "eval_count": eval_count,
                     "tokens_per_sec": tokens_per_sec,
-                    "provider": f"Ollama ({clean_model})"
+                    "model": clean_model,
+                    "provider": clean_model
                 }
                 return answer, stats
         except Exception as ollama_err:
@@ -263,7 +275,8 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
                     "total_duration_sec": total_duration,
                     "eval_count": eval_count,
                     "tokens_per_sec": tps,
-                    "provider": f"Google Gemini ({gemini_model})"
+                    "model": gemini_model,
+                    "provider": gemini_model
                 }
                 return answer, stats
             else:
@@ -281,7 +294,8 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
         llm = ChatOllama(model=model_name or "llama3", base_url=OLLAMA_BASE_URL, temperature=float(temperature), client_kwargs=client_kwargs)
         resp = llm.invoke([SystemMessage(content=sysprompt), HumanMessage(content=user_prompt)])
         total_duration = round(time.time() - start_time, 2)
-        return resp.content, {"total_duration_sec": total_duration, "eval_count": len(resp.content.split()), "tokens_per_sec": 0, "provider": "LangChain"}
+        used_m = model_name or "llama3"
+        return resp.content, {"total_duration_sec": total_duration, "eval_count": len(resp.content.split()), "tokens_per_sec": 0, "model": used_m, "provider": used_m}
     except Exception as lc_err:
         print(f"LangChain fallback notice: {lc_err}")
 
@@ -331,6 +345,10 @@ def serve_css():
 @app.route("/script.js")
 def serve_js():
     return send_from_directory(".", "script.js")
+
+@app.route("/LIMA_Logo.png")
+def serve_logo():
+    return send_from_directory(".", "LIMA_Logo.png")
 
 
 # --------------------------------------------------------------------------

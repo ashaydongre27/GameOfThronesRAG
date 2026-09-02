@@ -359,6 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // -------------------------------------------------------------
     let currentSettings = {
         themeProfile: "midnight",
+        lastDarkThemeProfile: "midnight",
         colorMode: "dark",
         usermodel: "gpt-oss:20b-cloud",
         usertemperature: 0.5,
@@ -395,6 +396,9 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (e) {
                 console.error("Settings load error:", e);
             }
+        }
+        if (currentSettings.themeProfile && currentSettings.themeProfile !== "light") {
+            currentSettings.lastDarkThemeProfile = currentSettings.themeProfile;
         }
         applySettingsToUI();
         applyAppearance();
@@ -439,7 +443,11 @@ document.addEventListener('DOMContentLoaded', () => {
         root.style.setProperty('--surface', colors.surface);
         root.style.setProperty('--surface-container', colors.surfaceContainer);
         root.style.setProperty('--on-surface', colors.onSurface);
+        root.style.setProperty('--on-surface-variant', isLight ? '#334155' : (colors.onSurfaceVariant || '#c2c6d6'));
         root.style.setProperty('--primary', colors.primary);
+        root.style.setProperty('--sidebar-bg', isLight ? '#ffffff' : (colors.sidebarBg || colors.surface));
+        root.style.setProperty('--glass-bg', isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.04)');
+        root.style.setProperty('--glass-border', isLight ? 'rgba(15, 23, 42, 0.15)' : 'rgba(255, 255, 255, 0.15)');
 
         // 4. Update Theme Switcher Icon & Text
         const isCurrentlyLight = root.classList.contains('light');
@@ -447,16 +455,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (themeToggleText) themeToggleText.textContent = isCurrentlyLight ? 'Light Mode' : 'Dark Mode';
     }
 
-    // Direct Dark / Light Mode Switcher
+    // Direct Dark / Light Mode Switcher with memory of last dark profile
     function toggleDarkLightMode() {
         const isLight = document.documentElement.classList.contains('light');
         if (isLight) {
             currentSettings.colorMode = "dark";
-            if (currentSettings.themeProfile === "light") {
-                currentSettings.themeProfile = "midnight";
-            }
+            currentSettings.themeProfile = currentSettings.lastDarkThemeProfile || "midnight";
         } else {
             currentSettings.colorMode = "light";
+            if (currentSettings.themeProfile && currentSettings.themeProfile !== "light") {
+                currentSettings.lastDarkThemeProfile = currentSettings.themeProfile;
+            }
             currentSettings.themeProfile = "light";
         }
         if (themeProfileSelect) themeProfileSelect.value = currentSettings.themeProfile;
@@ -470,12 +479,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Live preview when changing Appearance Profile in settings modal
     if (themeProfileSelect) {
         themeProfileSelect.addEventListener('change', (e) => {
-            currentSettings.themeProfile = e.target.value;
-            if (e.target.value === "light") {
+            const selectedProfile = e.target.value;
+            currentSettings.themeProfile = selectedProfile;
+            if (selectedProfile === "light") {
                 currentSettings.colorMode = "light";
             } else {
                 currentSettings.colorMode = "dark";
+                currentSettings.lastDarkThemeProfile = selectedProfile;
             }
+            localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
             applyAppearance();
         });
     }
@@ -504,15 +516,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => {
-            currentSettings = {
-                themeProfile: themeProfileSelect.value,
-                colorMode: themeProfileSelect.value === "light" ? "light" : "dark",
-                usermodel: usermodelInput.value,
-                usertemperature: parseFloat(usertemperatureInput.value),
-                umatch_count: parseInt(umatchCountInput.value, 10),
-                umatch_threshold: parseFloat(umatchThresholdInput.value),
-                sysprompt: syspromptInput.value
-            };
+            const selectedProfile = themeProfileSelect.value;
+            const isLight = selectedProfile === "light";
+            currentSettings.themeProfile = selectedProfile;
+            currentSettings.colorMode = isLight ? "light" : "dark";
+            if (!isLight) {
+                currentSettings.lastDarkThemeProfile = selectedProfile;
+            }
+            currentSettings.usermodel = usermodelInput.value;
+            currentSettings.usertemperature = parseFloat(usertemperatureInput.value);
+            currentSettings.umatch_count = parseInt(umatchCountInput.value, 10);
+            currentSettings.umatch_threshold = parseFloat(umatchThresholdInput.value);
+            currentSettings.sysprompt = syspromptInput.value;
             localStorage.setItem('ragSettings', JSON.stringify(currentSettings));
             applyAppearance();
             closeSettings();
@@ -711,7 +726,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="text-[11px] font-semibold uppercase tracking-wider text-primary">${currentUser ? (currentUser.first_name || currentUser.username) : 'User'}</span>
                     <span class="material-symbols-outlined text-[15px] text-primary">person</span>
                 </div>
-                <div class="bg-primary/10 border border-primary/30 backdrop-blur-xl p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words">
+                <div class="chat-bubble-user p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words shadow-sm">
                     ${text}
                 </div>
             `;
@@ -722,12 +737,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (hasStats || hasChunks) {
                 let statsHtml = '';
                 if (hasStats) {
+                    const displayedModel = stats.model || stats.provider || 'gpt-oss:20b';
                     statsHtml = `
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-2 mb-2 border-b border-glass-border/30 font-mono text-[11px] text-on-surface-variant">
                             <div>Latency: <strong class="text-primary">${stats.total_duration_sec || 0}s</strong></div>
                             <div>Tokens: <strong class="text-primary">${stats.eval_count || 0}</strong></div>
                             <div>Speed: <strong class="text-primary">${stats.tokens_per_sec || 0} t/s</strong></div>
-                            <div class="truncate">Model: <strong class="text-primary">${stats.provider || 'AI'}</strong></div>
+                            <div class="truncate">Model: <strong class="text-primary">${displayedModel}</strong></div>
                         </div>
                     `;
                 }
@@ -738,7 +754,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="space-y-2 mt-2">
                             <div class="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">Matched Vector Chunks (${chunks.length}):</div>
                             ${chunks.map((c, i) => `
-                                <div class="p-2 bg-surface-container/60 border border-glass-border/40 text-xs font-mono">
+                                <div class="p-2.5 bg-surface-container border border-glass-border text-xs font-mono">
                                     <div class="flex justify-between text-primary font-bold mb-1">
                                         <span>Chunk ${i + 1} (${c.id})</span>
                                         <span>Sim: ${c.similarity}</span>
@@ -768,10 +784,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             msgDiv.innerHTML = `
                 <div class="flex items-center gap-1.5 text-on-surface-variant mb-0.5">
-                    <span class="material-symbols-outlined text-[15px] text-primary">smart_toy</span>
+                    <img src="LIMA_Logo.png" alt="Lima" class="w-4 h-4 object-contain border border-primary/40" />
                     <span class="text-[11px] font-semibold uppercase tracking-wider text-primary">Lima</span>
                 </div>
-                <div class="bg-glass-panel border border-glass-border backdrop-blur-xl p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words">
+                <div class="chat-bubble-bot p-4 rounded-none text-on-surface text-sm md:text-base leading-relaxed break-words shadow-sm">
                     ${text}
                     ${detailsHtml}
                 </div>

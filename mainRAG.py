@@ -1,18 +1,22 @@
 import os
 from dotenv import load_dotenv
 from supabase import create_client
-from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_ollama import ChatOllama
 from langchain_core.prompts import PromptTemplate
+from src.Embedder import DocumentEmbedder
 
 load_dotenv()
 
+embedder = DocumentEmbedder(dimensionality=3072)
+
 def generate_rag_response(
     query="why ned move to capital",
+    rag_id="game_of_thrones",
     usermodel="gemma4:31b-cloud",
     usertemperature=0.5,
     umatch_count=10,
-    umatch_threshold=0.4,
-    sysprompt="\nYou are a helpful assistant. Use the following context to answer the user's question.\nIf you don't know the answer based on the context, just say that you don't know.\n"
+    umatch_threshold=0.35,
+    sysprompt="You are a helpful assistant. Use the following context to answer the user's question.\nIf you don't know the answer based on the context, just say that you don't know.\n"
 ):
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
@@ -32,15 +36,21 @@ def generate_rag_response(
     if OLLAMA_API_KEY:
         client_kwargs['headers'] = {'Authorization': f'Bearer {OLLAMA_API_KEY}'}
 
-    embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=OLLAMA_BASE_URL, client_kwargs=client_kwargs)
     llm = ChatOllama(model=usermodel, temperature=usertemperature, base_url=OLLAMA_BASE_URL, client_kwargs=client_kwargs)
 
-    print(f"Searching for: '{query}'...\n")
-    query_embedding = embeddings.embed_query(query)
+    rpc_names = {
+        "game_of_thrones": "match_gameofthronesvdb",
+        "spiderman": "match_spidermanvdb",
+        "apollo_11": "match_apollo11vdb"
+    }
+    rpc_name = rpc_names.get(rag_id, "match_gameofthronesvdb")
+
+    print(f"Searching for: '{query}' ({rag_id})...\n")
+    query_embedding = embedder.embed_text(query)
 
     try:
         result = supabase.rpc(
-            "match_mainragvdb",
+            rpc_name,
             {
                 "query_embedding": query_embedding,
                 "match_threshold": umatch_threshold,
@@ -66,12 +76,7 @@ def generate_rag_response(
             retrieved_context += f"{text_content}\n\n"
 
         print("\n--- GENERATING ANSWER ---")
-        prompt_template = """
-        {sysprompt}
-        Context:{context}
-        Question: {question}
-        Answer:
-        """
+        prompt_template = "{sysprompt}\nContext:\n{context}\nQuestion: {question}\nAnswer:\n"
         
         prompt = PromptTemplate.from_template(prompt_template)
         chain = prompt | llm 
