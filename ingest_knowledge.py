@@ -2,41 +2,27 @@ import os
 import requests
 import json
 import time
-from dotenv import load_dotenv
 from supabase import create_client
 from src.Embedder import DocumentEmbedder
-
-load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
 
 if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
-    raise ValueError("Missing Supabase credentials in .env file.")
+    raise ValueError("Missing Supabase credentials in environment variables.")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
-embedder = DocumentEmbedder(dimensionality=3072)
+embedder = DocumentEmbedder(dimensionality=768)
 
 def get_google_embedding(text: str) -> list:
     return embedder.embed_text(text)
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list:
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks = []
-    current_chunk = ""
+from src.Chunker import DocumentChunker
 
-    for p in paragraphs:
-        if len(current_chunk) + len(p) < chunk_size:
-            current_chunk += ("\n\n" if current_chunk else "") + p
-        else:
-            if current_chunk:
-                chunks.append(current_chunk)
-            current_chunk = p
+chunker = DocumentChunker(chunk_size=500, chunk_overlap=50)
 
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
+def chunk_text(text: str) -> list:
+    return chunker.chunk_text(text)
 
 def seed_table(table_name: str, chunks: list):
     print(f"Ingesting {len(chunks)} chunks into table '{table_name}'...")

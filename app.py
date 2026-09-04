@@ -6,10 +6,7 @@ import time
 import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from dotenv import load_dotenv
 from supabase import create_client, Client
-
-load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -45,74 +42,16 @@ RPC_MAPPINGS = {
 }
 
 
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from src.Embedder import DocumentEmbedder
 
-# Primary and Backup Google API Keys
-PRIMARY_GOOGLE_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-BACKUP_GOOGLE_KEY = os.getenv("GOOGLE_API_KEY_BACKUP") or os.getenv("GOOGLE_API_BACKUP") or os.getenv("GOOGLE_API_KEY_2") or ""
-
-_primary_embedder = None
-_backup_embedder = None
-_using_backup = False
-
-if PRIMARY_GOOGLE_KEY:
-    try:
-        _primary_embedder = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001",
-            google_api_key=PRIMARY_GOOGLE_KEY,
-            output_dimensionality=3072
-        )
-    except Exception as e:
-        print(f"Primary embedder initialization notice: {e}")
-
-if BACKUP_GOOGLE_KEY and BACKUP_GOOGLE_KEY != PRIMARY_GOOGLE_KEY:
-    try:
-        _backup_embedder = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001",
-            google_api_key=BACKUP_GOOGLE_KEY,
-            output_dimensionality=3072
-        )
-    except Exception as e:
-        print(f"Backup embedder initialization notice: {e}")
-
+embedder = DocumentEmbedder(dimensionality=768)
 
 # Helper Functions: Embeddings & Vector Search
 def get_embedding(text: str, base_url: str = "", api_key: str = "") -> list:
-    global _primary_embedder, _backup_embedder, _using_backup
-
-    # Custom override key if explicitly passed
     if api_key:
-        embedder = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001",
-            google_api_key=api_key,
-            output_dimensionality=3072
-        )
-        return embedder.embed_query(text.strip()[:2048])
-
-    if not _primary_embedder and PRIMARY_GOOGLE_KEY:
-        _primary_embedder = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001",
-            google_api_key=PRIMARY_GOOGLE_KEY,
-            output_dimensionality=3072
-        )
-
-    if not _primary_embedder:
-        raise ValueError("Missing GOOGLE_API_KEY in environment or .env file.")
-
-    cleaned = text.strip()[:2048]
-
-    # Try active embedder (primary or backup)
-    active_embedder = _backup_embedder if (_using_backup and _backup_embedder) else _primary_embedder
-
-    try:
-        return active_embedder.embed_query(cleaned)
-    except Exception as e:
-        err_str = str(e)
-        if ("RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "Quota" in err_str) and _backup_embedder and not _using_backup:
-            _using_backup = True
-            print(" [Failover] Primary Google API key reached quota limit (429). Switched to backup API key.")
-            return _backup_embedder.embed_query(cleaned)
-        raise e
+        custom_embedder = DocumentEmbedder(primary_key=api_key, dimensionality=768)
+        return custom_embedder.embed_text(text)
+    return embedder.embed_text(text)
 
 
 def cosine_similarity(vec_a: list, vec_b: list) -> float:
@@ -246,43 +185,51 @@ def generate_chat_answer(model_name: str, sysprompt: str, context: str, query: s
         except Exception as ollama_err:
             print(f"Ollama chat attempt notice: {ollama_err}")
 
-    # 2. Try Google Gemini API (Fast, Reliable & High Quality)
-    if GOOGLE_API_KEY:
+    # 2. Try Google Gemini API with Primary and Backup Key Failover
+    keys_to_try = [k for k in [embedder.primary_key, embedder.backup_key] if k]
+
+    if keys_to_try:
         gemini_model = "gemini-3.6-flash"
         if "3.5" in model_name:
             gemini_model = "gemini-3.5-flash"
         elif "gemma" in model_name:
             gemini_model = "gemma-4-31b-it"
 
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={GOOGLE_API_KEY}"
-            payload = {
-                "system_instruction": {"parts": [{"text": sysprompt}]},
-                "contents": [{"parts": [{"text": user_prompt}]}],
-                "generationConfig": {
-                    "temperature": float(temperature),
-                    "maxOutputTokens": 1024
+        for k_idx, current_key in enumerate(keys_to_try):
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={current_key}"
+                payload = {
+                    "system_instruction": {"parts": [{"text": sysprompt}]},
+                    "contents": [{"parts": [{"text": user_prompt}]}],
+                    "generationConfig": {
+                        "temperature": float(temperature),
+                        "maxOutputTokens": 1024
+                    }
                 }
-            }
-            res = requests.post(url, json=payload, timeout=35)
-            if res.ok:
-                data = res.json()
-                answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                total_duration = round(time.time() - start_time, 2)
-                eval_count = data.get("usageMetadata", {}).get("candidatesTokenCount", len(answer.split()))
-                tps = round(eval_count / total_duration, 2) if total_duration > 0 else 0
-                stats = {
-                    "total_duration_sec": total_duration,
-                    "eval_count": eval_count,
-                    "tokens_per_sec": tps,
-                    "model": gemini_model,
-                    "provider": gemini_model
-                }
-                return answer, stats
-            else:
-                print(f"Gemini API notice: {res.text[:150]}")
-        except Exception as gemini_err:
-            print(f"Gemini generation exception: {gemini_err}")
+                res = requests.post(url, json=payload, timeout=35)
+                if res.ok:
+                    data = res.json()
+                    answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    total_duration = round(time.time() - start_time, 2)
+                    eval_count = data.get("usageMetadata", {}).get("candidatesTokenCount", len(answer.split()))
+                    tps = round(eval_count / total_duration, 2) if total_duration > 0 else 0
+                    stats = {
+                        "total_duration_sec": total_duration,
+                        "eval_count": eval_count,
+                        "tokens_per_sec": tps,
+                        "model": gemini_model,
+                        "provider": gemini_model
+                    }
+                    return answer, stats
+                else:
+                    print(f"Gemini API attempt notice: {res.text[:150]}")
+                    if k_idx < len(keys_to_try) - 1:
+                        print(" [Failover] Switching to backup key for chat generation...")
+                        continue
+            except Exception as gemini_err:
+                print(f"Gemini generation exception: {gemini_err}")
+                if k_idx < len(keys_to_try) - 1:
+                    continue
 
     # 3. LangChain ChatOllama Fallback
     try:
@@ -557,8 +504,13 @@ def ask_question():
         })
 
     except Exception as e:
-        print(f"Ask route error: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"Ask route backend error (logged for admin): {e}")
+        return jsonify({
+            "answer": "I apologize, but I am unable to answer that question right now. Please try again in a few moments.",
+            "sources": [],
+            "stats": {},
+            "chunks": []
+        })
 
 
 # --------------------------------------------------------------------------
@@ -569,7 +521,8 @@ def health():
     return jsonify({
         "status": "ok",
         "supabase_connected": bool(supabase),
-        "google_api_configured": bool(GOOGLE_API_KEY),
+        "google_api_configured": bool(embedder.primary_key or embedder.backup_key),
+        "backup_api_configured": bool(embedder.backup_key),
         "tables": list(TABLE_MAPPINGS.values()),
         "base_dir": os.path.dirname(os.path.abspath(__file__))
     })

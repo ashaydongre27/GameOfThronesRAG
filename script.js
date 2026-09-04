@@ -838,15 +838,16 @@ document.addEventListener('DOMContentLoaded', () => {
             typingMsg.remove();
 
             if (!response.ok || data.error) {
-                const errorMsg = data.error || `Server error (${response.status})`;
-                appendMessage(`⚠️ <strong>Notice:</strong> ${errorMsg}`, 'bot');
+                console.error("Server error:", data.error || response.status);
+                appendMessage(data.answer || "I apologize, but I am unable to answer that question right now. Please try again in a few moments.", 'bot');
             } else {
                 appendMessage(data.answer, 'bot', data.stats, data.chunks);
                 persistMessageTurn(query, data.answer, data.stats, data.chunks);
             }
         } catch (error) {
             typingMsg.remove();
-            appendMessage(`⚠️ <strong>Connection Error:</strong> ${error.message}`, 'bot');
+            console.error("Connection error:", error);
+            appendMessage("I apologize, but I am temporarily unable to connect to the service. Please try again in a few moments.", 'bot');
         }
     }
 

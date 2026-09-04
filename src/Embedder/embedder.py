@@ -6,7 +6,6 @@ import time
 import glob
 import argparse
 import warnings
-from dotenv import load_dotenv
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -19,41 +18,55 @@ except Exception:
     pass
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
-load_dotenv()
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
+def clean_key_val(v: str) -> str:
+    if not v:
+        return ""
+    v = v.strip()
+    if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or (v[0] == "'" and v[-1] == "'")):
+        v = v[1:-1].strip()
+    return v
+
 
 class DocumentEmbedder:
-    def __init__(self, primary_key: str = None, backup_key: str = None, model_name: str = "models/gemini-embedding-001", dimensionality: int = 3072, delay: float = 1.0):
-        self.primary_key = primary_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        self.backup_key = backup_key or os.getenv("GOOGLE_API_KEY_BACKUP") or os.getenv("GOOGLE_API_BACKUP") or os.getenv("GOOGLE_API_KEY_2")
+    def __init__(self, primary_key: str = None, backup_key: str = None, model_name: str = "models/gemini-embedding-001", dimensionality: int = 768, delay: float = 1.0):
+        self.primary_key = clean_key_val(primary_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_PRIMARY"))
+        self.backup_key = clean_key_val(backup_key or os.getenv("GOOGLE_API_KEY_BACKUP") or os.getenv("GOOGLE_API_BACKUP") or os.getenv("GOOGLE_API_KEY_2") or os.getenv("GEMINI_API_KEY_BACKUP"))
         self.model_name = model_name
         self.dimensionality = dimensionality
         self.delay = delay
+        self.primary_embedder = None
+        self.backup_embedder = None
+        self.use_backup = False
+
+    def _ensure_initialized(self):
+        if not self.primary_key:
+            self.primary_key = clean_key_val(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_PRIMARY"))
+            self.backup_key = clean_key_val(os.getenv("GOOGLE_API_KEY_BACKUP") or os.getenv("GOOGLE_API_BACKUP") or os.getenv("GOOGLE_API_KEY_2") or os.getenv("GEMINI_API_KEY_BACKUP"))
+
+        if not self.primary_key and self.backup_key:
+            self.primary_key, self.backup_key = self.backup_key, ""
 
         if not self.primary_key:
-            raise ValueError("Missing GOOGLE_API_KEY in environment or .env file.")
+            raise ValueError("Google API key is missing. Please set GOOGLE_API_KEY in your environment variables.")
 
-        # Primary embedder
-        primary_kwargs = {"model": self.model_name, "google_api_key": self.primary_key}
-        if self.dimensionality:
-            primary_kwargs["output_dimensionality"] = self.dimensionality
-        self.primary_embedder = GoogleGenerativeAIEmbeddings(**primary_kwargs)
+        if not self.primary_embedder:
+            primary_kwargs = {"model": self.model_name, "google_api_key": self.primary_key}
+            if self.dimensionality:
+                primary_kwargs["output_dimensionality"] = self.dimensionality
+            self.primary_embedder = GoogleGenerativeAIEmbeddings(**primary_kwargs)
 
-        # Backup embedder (if configured)
-        self.backup_embedder = None
-        if self.backup_key and self.backup_key != self.primary_key:
+        if self.backup_key and self.backup_key != self.primary_key and not self.backup_embedder:
             backup_kwargs = {"model": self.model_name, "google_api_key": self.backup_key}
             if self.dimensionality:
                 backup_kwargs["output_dimensionality"] = self.dimensionality
             self.backup_embedder = GoogleGenerativeAIEmbeddings(**backup_kwargs)
 
-        self.use_backup = False
-
     @property
     def current_embedder(self) -> GoogleGenerativeAIEmbeddings:
+        self._ensure_initialized()
         if self.use_backup and self.backup_embedder:
             return self.backup_embedder
         return self.primary_embedder
@@ -76,8 +89,9 @@ class DocumentEmbedder:
         return default
 
     def embed_text(self, text: str, max_retries: int = 5) -> list[float]:
+        dim = self.dimensionality or 768
         if not text or not text.strip():
-            return [0.0] * (self.dimensionality or 3072)
+            return [0.0] * dim
 
         cleaned = text.strip()[:2048]
         for attempt in range(max_retries):
@@ -101,7 +115,7 @@ class DocumentEmbedder:
                     if attempt == max_retries - 1:
                         raise e
                     time.sleep(2)
-        return [0.0] * (self.dimensionality or 3072)
+        return [0.0] * dim
 
     def embed_batch(self, texts: list[str], max_retries: int = 6) -> list[list[float]]:
         if not texts:
@@ -227,12 +241,12 @@ class DocumentEmbedder:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LangChain Google GenAI Embedder (Primary + Backup Key Failover)")
+    parser = argparse.ArgumentParser(description="LangChain Google GenAI Embedder (768-dim, Primary + Backup Key Failover)")
     parser.add_argument("-i", "--input", help="Path to input .jsonl file")
     parser.add_argument("-o", "--output", help="Path to output .jsonl file")
     parser.add_argument("-d", "--dir", help="Path to directory containing .jsonl files")
     parser.add_argument("--output-dir", help="Path to output directory")
-    parser.add_argument("--dim", type=int, default=3072, help="Embedding dimensionality (default: 3072)")
+    parser.add_argument("--dim", type=int, default=768, help="Embedding dimensionality (default: 768)")
     parser.add_argument("--delay", type=float, default=1.0, help="Proactive sleep delay between files/batches (default: 1.0s)")
 
     args = parser.parse_args()
